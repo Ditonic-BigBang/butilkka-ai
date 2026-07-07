@@ -53,7 +53,17 @@ def root():
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    from app.services.cache_service import get_cache_service
+    try:
+        cache = get_cache_service()
+        redis_ok = cache.ping()
+    except Exception:
+        redis_ok = False
+
+    return {
+        "status": "ok" if redis_ok else "degraded",
+        "redis": "connected" if redis_ok else "disconnected"
+    }
 
 
 if __name__ == "__main__":

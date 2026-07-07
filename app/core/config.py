@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     model_dir: str = "app/models"
     chroma_db_dir: str = "chroma_db"
 
+    # Redis
+    redis_url: str = "redis://localhost:6379"
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
