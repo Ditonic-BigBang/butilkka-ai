@@ -1,5 +1,7 @@
 import redis
 import json
+import hashlib
+import unicodedata
 from typing import Optional, Any
 import logging
 
@@ -9,12 +11,15 @@ logger = logging.getLogger(__name__)
 class CacheService:
     """Redis 캐시 서비스"""
 
+    # TTL 정책
+    TTL_PERMANENT = None      # 영구 (grade, all_grades)
+    TTL_NEWS = 21600          # 6시간 (뉴스)
+
     def __init__(self, redis_url: str = "redis://localhost:6379"):
         self.redis = redis.from_url(redis_url, decode_responses=True)
-        self.default_ttl = 86400  # 1일
 
     # ─────────────────────────────────────────
-    # 등급 캐시
+    # 등급 캐시 (영구)
     # ─────────────────────────────────────────
 
     def set_grade(
@@ -25,10 +30,10 @@ class CacheService:
         grade: str,
         score: float
     ) -> None:
-        """등급 캐시 저장"""
+        """등급 캐시 저장 (영구)"""
         key = f"grade:{region_code}:{year}:{quarter}"
         value = json.dumps({"grade": grade, "score": score})
-        self.redis.setex(key, self.default_ttl, value)
+        self.redis.set(key, value)  # TTL 없음
 
     def get_grade(
         self,
@@ -49,10 +54,10 @@ class CacheService:
         quarter: int,
         grades: list[dict]
     ) -> None:
-        """전체 등급 리스트 캐시 (similar_cases용)"""
+        """전체 등급 리스트 캐시 (영구)"""
         key = f"all_grades:{year}:{quarter}"
         value = json.dumps(grades)
-        self.redis.setex(key, self.default_ttl, value)
+        self.redis.set(key, value)  # TTL 없음
 
     def get_all_grades(
         self,
@@ -67,27 +72,25 @@ class CacheService:
         return None
 
     # ─────────────────────────────────────────
-    # 뉴스/임베딩 캐시
+    # 뉴스 캐시 (6시간 TTL)
     # ─────────────────────────────────────────
 
-    def set_news_cache(
-        self,
-        query: str,
-        articles: list[dict],
-        ttl: int = 3600  # 1시간
-    ) -> None:
-        """뉴스 검색 결과 캐시"""
-        key = f"news:{query}"
-        value = json.dumps(articles)
-        self.redis.setex(key, ttl, value)
+    @staticmethod
+    def _normalize_query(query: str) -> str:
+        """쿼리 정규화 (공백, 한글 NFD 처리)"""
+        norm = " ".join(query.strip().split())  # 공백 정규화
+        norm = unicodedata.normalize('NFC', norm)  # 한글 NFD → NFC
+        return hashlib.md5(norm.encode()).hexdigest()
 
-    def get_news_cache(self, query: str) -> Optional[list[dict]]:
-        """뉴스 검색 결과 조회"""
-        key = f"news:{query}"
-        value = self.redis.get(key)
-        if value:
-            return json.loads(value)
-        return None
+    def set_news_embedded(self, query: str) -> None:
+        """뉴스 임베딩 완료 플래그 (실제 벡터는 ChromaDB)"""
+        key = f"news_embedded:{self._normalize_query(query)}"
+        self.redis.setex(key, self.TTL_NEWS, "1")
+
+    def is_news_embedded(self, query: str) -> bool:
+        """뉴스 임베딩 여부 확인"""
+        key = f"news_embedded:{self._normalize_query(query)}"
+        return self.redis.exists(key) == 1
 
     # ─────────────────────────────────────────
     # 범용 메서드
@@ -99,7 +102,7 @@ class CacheService:
         if ttl:
             self.redis.setex(key, ttl, serialized)
         else:
-            self.redis.setex(key, self.default_ttl, serialized)
+            self.redis.set(key, serialized)  # 영구
 
     def get(self, key: str) -> Optional[Any]:
         """범용 캐시 조회"""
