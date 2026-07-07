@@ -8,6 +8,26 @@ logger = logging.getLogger(__name__)
 class NewsService:
     """Tavily 뉴스 검색 서비스"""
 
+    # 한국 주요 뉴스 도메인
+    KR_NEWS_DOMAINS = [
+        "news.naver.com",
+        "n.news.naver.com",
+        "yonhapnews.co.kr",
+        "yna.co.kr",
+        "chosun.com",
+        "donga.com",
+        "joongang.co.kr",
+        "hani.co.kr",
+        "khan.co.kr",
+        "mk.co.kr",
+        "edaily.co.kr",
+        "sedaily.com",
+        "newsis.com",
+        "news1.kr",
+        "mt.co.kr",
+        "hankyung.com",
+    ]
+
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key
         self.client = None
@@ -39,6 +59,7 @@ class NewsService:
                 search_depth="basic",
                 max_results=max_results,
                 days=days,
+                include_domains=self.KR_NEWS_DOMAINS,
                 include_answer=False,
                 include_raw_content=False,
             )
