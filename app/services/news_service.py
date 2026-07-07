@@ -27,9 +27,10 @@ class NewsService:
     async def search_news(
         self,
         query: str,
-        max_results: int = 10
+        max_results: int = 10,
+        days: int = 90
     ) -> list[dict]:
-        """Tavily로 뉴스/웹 검색"""
+        """Tavily로 뉴스/웹 검색 (최근 N일)"""
         try:
             self._ensure_client()
 
@@ -37,6 +38,7 @@ class NewsService:
                 query=query,
                 search_depth="basic",
                 max_results=max_results,
+                days=days,
                 include_answer=False,
                 include_raw_content=False,
             )

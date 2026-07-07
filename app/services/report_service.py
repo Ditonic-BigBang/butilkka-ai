@@ -32,9 +32,9 @@ class ReportService:
     ) -> dict:
         """리포트 생성 파이프라인"""
 
-        # 1. Tavily 뉴스 검색
-        query = f"{district_name} {region_name} 상권"
-        articles = await news_service.search_news(query=query, max_results=10)
+        # 1. Tavily 뉴스 검색 (구 단위, 최근 3개월)
+        query = f"{district_name} 상권"
+        articles = await news_service.search_news(query=query, max_results=10, days=90)
 
         # 2. FAISS 인덱스 생성
         if articles:
