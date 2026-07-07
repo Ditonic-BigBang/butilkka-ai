@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./app/models:/app/app/models  # 모델 파일 마운트
+      - ./chroma_db:/app/chroma_db    # 벡터DB 영속화
+    env_file:
+      - .env
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+    restart: unless-stopped
