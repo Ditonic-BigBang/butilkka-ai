@@ -1,8 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional
-from app.services.news_service import news_service
-from app.services.rag_service import create_rag_service, RAGService
+from app.services.report_service import create_report_service, ReportService
 from app.services.cache_service import get_cache_service
 from app.core.config import get_settings, Settings
 
@@ -10,68 +9,85 @@ router = APIRouter(prefix="/report", tags=["AI Report"])
 
 
 # ─────────────────────────────────────────
-# Request/Response 스키마
+# Request/Response 스키마 (ERD 기준)
 # ─────────────────────────────────────────
 
 class ReportContext(BaseModel):
-    sales_delta: float | None = None
-    foot_traffic_delta: float | None = None
-    store_count_delta: float | None = None
-    closure_rate: float | None = None
-    vacancy_rate: float | None = None
-    top_age_group: str | None = None
-    top_gender: str | None = None
+    """Spring에서 전달하는 상권 지표"""
+    sales_delta: float | None = None          # 매출 변화율
+    foot_traffic_delta: float | None = None   # 유동인구 변화율
+    store_count_delta: float | None = None    # 점포수 변화율
+    closure_rate: float | None = None         # 폐업률
+    vacancy_rate: float | None = None         # 공실률
+    top_age_group: str | None = None          # 주요 연령대
+    top_gender: str | None = None             # 주요 성별
 
 
 class ReportGenerateRequest(BaseModel):
-    region_code: str
-    region_name: str
-    district_name: str
+    """리포트 생성 요청"""
+    region_code: str         # 상권 코드 (10자리)
+    region_name: str         # 행정동 이름
+    district_name: str       # 자치구 이름
     year: int
     quarter: int
-    decline_grade: str
-    score: float
+    grade: str               # A~E
+    score: int               # 0~100
+    decline_type: str        # 성장/정체/쇠퇴
     context: ReportContext
 
 
+# ─── 하위 테이블 스키마 ───
+
 class CauseItem(BaseModel):
+    """report_cause 테이블"""
     title: str
-    level: str
+    level: str          # 높음/중간/낮음
     description: str
 
 
 class SignalItem(BaseModel):
+    """report_signal 테이블"""
     title: str
     description: str
 
 
-class SimilarCaseItem(BaseModel):
-    region_code: str
-    summary: str
-    description: str | None = None
-    start_year: int | None = None
-    end_year: int | None = None
-    tags: list[str] = []
-
-
-class AlternativeRegionItem(BaseModel):
-    region_code: str
-    reason: str
-    stat: str
-
-
 class DecisionReasons(BaseModel):
+    """report_decision_reasons 테이블"""
     reason_1: str | None = None
     reason_2: str | None = None
     reason_3: str | None = None
 
 
-class ReportGenerateResponse(BaseModel):
-    ai_outlook: str
+class SimilarCaseItem(BaseModel):
+    """report_similar_cases 테이블"""
+    region_code: str
     summary: str
-    decision_recommendation: str
+    description: str | None = None
+    start_year: int | None = None
+    end_year: int | None = None
+    tag1: str | None = None
+    tag2: str | None = None
+    tag3: str | None = None
+    tag4: str | None = None
+
+
+class AlternativeRegionItem(BaseModel):
+    """report_alternative_regions 테이블"""
+    region_code: str
+    reason: str
+    stat: str
+
+
+class ReportGenerateResponse(BaseModel):
+    """리포트 생성 응답 (reports 테이블 + 하위 테이블)"""
+    # reports 테이블 필드
+    summary: str                      # 한 줄 요약
+    ai_outlook: str                   # AI 종합 전망 (5~6줄)
+    decision_recommendation: str      # 버티기/이동
     decision_title: str
     decision_description: str
+
+    # 하위 테이블
     causes: list[CauseItem]
     signals: list[SignalItem]
     decision_reasons: DecisionReasons
@@ -79,27 +95,12 @@ class ReportGenerateResponse(BaseModel):
     alternative_regions: list[AlternativeRegionItem]
 
 
-class NewsSearchRequest(BaseModel):
-    query: str
-    max_results: int = 10
-
-
-class EmbedRequest(BaseModel):
-    texts: list[str]
-    metadatas: list[dict] = None
-
-
-class SearchRequest(BaseModel):
-    query: str
-    k: int = 5
-
-
 # ─────────────────────────────────────────
 # Dependencies
 # ─────────────────────────────────────────
 
-def get_rag_service(settings: Settings = Depends(get_settings)) -> RAGService:
-    return create_rag_service(openai_api_key=settings.openai_api_key)
+def get_report_service(settings: Settings = Depends(get_settings)) -> ReportService:
+    return create_report_service(openai_api_key=settings.openai_api_key)
 
 
 # ─────────────────────────────────────────
@@ -109,17 +110,18 @@ def get_rag_service(settings: Settings = Depends(get_settings)) -> RAGService:
 @router.post("/generate", response_model=ReportGenerateResponse)
 async def generate_report(
     request: ReportGenerateRequest,
-    rag_service: RAGService = Depends(get_rag_service)
+    report_service: ReportService = Depends(get_report_service)
 ):
     """
     AI 리포트 생성
-    - 뉴스 검색 + RAG 임베딩
-    - LLM으로 분석 생성
-    - all_grades 캐시 필수 (없으면 400)
+    - Tavily 뉴스 검색
+    - FAISS 임베딩
+    - 3회 LLM 호출 (전망/요약, 원인/시그널, 의사결정)
+    - all_grades 캐시로 유사사례/대안지역
     """
     cache = get_cache_service()
 
-    # all_grades 캐시 확인 (유사사례/대안지역용)
+    # all_grades 캐시 확인
     all_grades = cache.get_all_grades(request.year, request.quarter)
     if all_grades is None:
         raise HTTPException(
@@ -127,104 +129,31 @@ async def generate_report(
             detail=f"등급 데이터 없음. POST /api/grade/batch를 먼저 실행하세요. (year={request.year}, quarter={request.quarter})"
         )
 
-    # 뉴스 검색 쿼리 생성
-    news_query = f"{request.district_name} 상권"
-
-    # 캐시 확인 후 뉴스 임베딩
-    if not cache.is_news_embedded(news_query):
-        # 뉴스 검색
-        articles = await news_service.search_news(
-            query=news_query,
-            max_results=10
+    try:
+        result = await report_service.generate(
+            region_code=request.region_code,
+            region_name=request.region_name,
+            district_name=request.district_name,
+            year=request.year,
+            quarter=request.quarter,
+            grade=request.grade,
+            score=request.score,
+            decline_type=request.decline_type,
+            context=request.context.model_dump()
         )
 
-        if articles:
-            # 임베딩
-            texts = [f"{a['title']} {a['description']}" for a in articles]
-            metadatas = [{"source": "news", "query": news_query} for _ in articles]
-            rag_service.add_documents(texts=texts, metadatas=metadatas)
-
-            # 캐시 플래그
-            cache.set_news_embedded(news_query)
-
-    # RAG 컨텍스트 생성
-    rag_context = rag_service.generate_context(
-        query=f"{request.region_name} {request.district_name} 상권 {request.decline_grade}",
-        k=3
-    )
-
-    # TODO: LLM 호출해서 실제 리포트 생성
-    # 지금은 목업 응답
-
-    return ReportGenerateResponse(
-        ai_outlook=f"{request.region_name}은(는) 현재 {request.decline_grade} 등급으로 분류됩니다. (RAG 컨텍스트: {len(rag_context)}자)",
-        summary=f"{request.district_name} {request.region_name} 상권 분석 요약",
-        decision_recommendation="HOLD",
-        decision_title="현상 유지 권고",
-        decision_description="추가 분석이 필요합니다.",
-        causes=[
-            CauseItem(title="유동인구 변화", level="MEDIUM", description="분석 중...")
-        ],
-        signals=[
-            SignalItem(title="임대료 동향", description="분석 중...")
-        ],
-        decision_reasons=DecisionReasons(
-            reason_1="시장 상황 관망",
-            reason_2="추가 데이터 필요",
-            reason_3=None
-        ),
-        similar_cases=[],  # TODO: all_grades 기반 유사 지역 찾기
-        alternative_regions=[]  # TODO: all_grades 기반 대안 지역 찾기
-    )
-
-
-@router.post("/news/search")
-async def search_news(request: NewsSearchRequest):
-    """뉴스 검색"""
-    articles = await news_service.search_news(
-        query=request.query,
-        max_results=request.max_results
-    )
-    return {"articles": articles, "count": len(articles)}
-
-
-@router.post("/embed")
-def embed_documents(
-    request: EmbedRequest,
-    rag_service: RAGService = Depends(get_rag_service)
-):
-    """문서 벡터 임베딩"""
-    try:
-        count = rag_service.add_documents(
-            texts=request.texts,
-            metadatas=request.metadatas
+        return ReportGenerateResponse(
+            summary=result.get("summary", ""),
+            ai_outlook=result.get("ai_outlook", ""),
+            decision_recommendation=result.get("decision_recommendation", "버티기"),
+            decision_title=result.get("decision_title", ""),
+            decision_description=result.get("decision_description", ""),
+            causes=[CauseItem(**c) for c in result.get("causes", [])],
+            signals=[SignalItem(**s) for s in result.get("signals", [])],
+            decision_reasons=DecisionReasons(**result.get("decision_reasons", {})),
+            similar_cases=[SimilarCaseItem(**s) for s in result.get("similar_cases", [])],
+            alternative_regions=[AlternativeRegionItem(**a) for a in result.get("alternative_regions", [])]
         )
-        return {"message": f"{count} chunks embedded", "chunks": count}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
-
-@router.post("/search")
-def search_similar(
-    request: SearchRequest,
-    rag_service: RAGService = Depends(get_rag_service)
-):
-    """유사 문서 검색"""
-    try:
-        results = rag_service.search(query=request.query, k=request.k)
-        return {"results": results, "count": len(results)}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/context")
-def generate_context(
-    request: SearchRequest,
-    rag_service: RAGService = Depends(get_rag_service)
-):
-    """RAG 컨텍스트 생성"""
-    try:
-        context = rag_service.generate_context(query=request.query, k=request.k)
-        return {"context": context}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

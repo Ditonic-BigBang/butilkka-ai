@@ -28,11 +28,16 @@ class CacheService:
         year: int,
         quarter: int,
         grade: str,
-        score: float
+        score: int,
+        decline_type: str
     ) -> None:
         """등급 캐시 저장 (영구)"""
         key = f"grade:{region_code}:{year}:{quarter}"
-        value = json.dumps({"grade": grade, "score": score})
+        value = json.dumps({
+            "grade": grade,
+            "score": score,
+            "decline_type": decline_type
+        })
         self.redis.set(key, value)  # TTL 없음
 
     def get_grade(

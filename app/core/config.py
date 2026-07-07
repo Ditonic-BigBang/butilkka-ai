@@ -5,7 +5,7 @@ from functools import lru_cache
 class Settings(BaseSettings):
     # API Keys
     openai_api_key: str = ""
-    news_api_key: str = ""
+    tavily_api_key: str = ""
 
     # Server
     host: str = "0.0.0.0"
