@@ -6,6 +6,7 @@ import logging
 from app.services.news_service import news_service
 from app.services.rag_service import RAGService
 from app.services.cache_service import get_cache_service
+from app.services.case_service import get_case_service
 
 logger = logging.getLogger(__name__)
 
@@ -13,9 +14,10 @@ logger = logging.getLogger(__name__)
 class ReportService:
     """AI 리포트 생성 서비스 (ERD 기준, 3회 LLM 호출)"""
 
-    def __init__(self, openai_api_key: str):
+    def __init__(self, openai_api_key: str, chroma_db_dir: str = "chroma_db"):
         self.client = OpenAI(api_key=openai_api_key)
         self.rag = RAGService(openai_api_key=openai_api_key)
+        self.case_service = get_case_service(openai_api_key=openai_api_key, persist_directory=chroma_db_dir)
         self.model = "gpt-4o-mini"
 
     async def generate(
@@ -72,15 +74,15 @@ class ReportService:
             outlook=outlook_result.get("ai_outlook", "")
         )
 
-        # 6. 유사 사례 / 대안 지역 (all_grades 캐시)
+        # 6. 유사 사례 (벡터 검색) / 대안 지역 (all_grades 캐시)
         cache = get_cache_service()
         all_grades = cache.get_all_grades(year, quarter) or []
 
         similar_cases = self._find_similar_cases(
-            current_grade=grade,
-            current_score=score,
+            region_name=region_name,
+            district_name=district_name,
             decline_type=decline_type,
-            all_grades=all_grades,
+            causes=cause_signal_result.get("causes", []),
             exclude_code=region_code
         )
 
@@ -91,7 +93,24 @@ class ReportService:
             exclude_code=region_code
         )
 
-        # 7. 결과 조합
+        # 7. 생성된 리포트를 다음 유사사례 검색을 위해 색인 (실패해도 응답에 영향 없음)
+        try:
+            self.case_service.upsert_report(
+                region_code=region_code,
+                region_name=region_name,
+                district_name=district_name,
+                year=year,
+                quarter=quarter,
+                grade=grade,
+                decline_type=decline_type,
+                summary=outlook_result.get("summary", ""),
+                ai_outlook=outlook_result.get("ai_outlook", ""),
+                causes=cause_signal_result.get("causes", []),
+            )
+        except Exception as e:
+            logger.warning(f"생성 리포트 벡터 색인 실패 (무시하고 계속): {e}")
+
+        # 8. 결과 조합
         return {
             "summary": outlook_result.get("summary", ""),
             "ai_outlook": outlook_result.get("ai_outlook", ""),
@@ -255,38 +274,36 @@ class ReportService:
 
     def _find_similar_cases(
         self,
-        current_grade: str,
-        current_score: int,
+        region_name: str,
+        district_name: str,
         decline_type: str,
-        all_grades: list[dict],
+        causes: list[dict],
         exclude_code: str
     ) -> list[dict]:
-        """유사 사례 찾기 (같은 등급, 비슷한 점수)"""
-        similar = []
+        """유사 사례 찾기 (벡터 검색: 큐레이션 사례 + 과거 생성 리포트)"""
+        cause_titles = " ".join(c.get("title", "") for c in causes)
+        query = f"{district_name} {region_name} {decline_type} {cause_titles}".strip()
 
-        for item in all_grades:
-            if item["region_code"] == exclude_code:
-                continue
-            if item["grade"] == current_grade:
-                item_score = item.get("score", 50)
-                score_diff = abs(item_score - current_score)
-                if score_diff < 15:  # 점수 차이 15점 이내
-                    similar.append({
-                        "region_code": item["region_code"],
-                        "summary": f"동일 등급({current_grade}), 유사 점수({item_score}점)",
-                        "description": None,
-                        "start_year": None,
-                        "end_year": None,
-                        "tag1": current_grade,
-                        "tag2": decline_type,
-                        "tag3": None,
-                        "tag4": None
-                    })
+        try:
+            results = self.case_service.search_similar(query=query, k=3, exclude_region_code=exclude_code)
+        except Exception as e:
+            logger.warning(f"유사 사례 벡터 검색 실패, 빈 목록 반환: {e}")
+            return []
 
-            if len(similar) >= 3:
-                break
-
-        return similar
+        return [
+            {
+                "region_code": meta["region_code"],
+                "summary": meta.get("summary", ""),
+                "description": meta.get("description"),
+                "start_year": meta.get("start_year"),
+                "end_year": meta.get("end_year"),
+                "tag1": meta.get("tag1"),
+                "tag2": meta.get("tag2"),
+                "tag3": meta.get("tag3"),
+                "tag4": meta.get("tag4"),
+            }
+            for meta in results
+        ]
 
     def _find_alternatives(
         self,
@@ -329,5 +346,5 @@ class ReportService:
         return alternatives
 
 
-def create_report_service(openai_api_key: str) -> ReportService:
-    return ReportService(openai_api_key=openai_api_key)
+def create_report_service(openai_api_key: str, chroma_db_dir: str = "chroma_db") -> ReportService:
+    return ReportService(openai_api_key=openai_api_key, chroma_db_dir=chroma_db_dir)

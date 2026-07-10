@@ -1,0 +1,38 @@
+[
+  {
+    "case_id": "hongdae_2015_2018",
+    "region_name": "홍대",
+    "district_name": "마포구",
+    "region_code": null,
+    "start_year": 2015,
+    "end_year": 2018,
+    "decline_type": "쇠퇴형",
+    "summary": "임대료 급등과 프랜차이즈 유입으로 개성 상실, 젠트리피케이션으로 쇠퇴",
+    "description": "2015년부터 2018년까지 홍대 상권은 임대료 급등에 따른 원주민 상인 이탈, 대형 프랜차이즈 유입, 지역 고유 문화 콘텐츠 약화로 유동인구 질이 변화하며 상권 매력도가 하락했다.",
+    "tags": ["젠트리피케이션", "임대료상승", "개성상실", "프랜차이즈유입"]
+  },
+  {
+    "case_id": "gyeongridan_2014_2019",
+    "region_name": "경리단길",
+    "district_name": "용산구",
+    "region_code": null,
+    "start_year": 2014,
+    "end_year": 2019,
+    "decline_type": "쇠퇴형",
+    "summary": "급격한 성장 이후 임대료 상승과 대체 상권 부상으로 침체",
+    "description": "SNS 인기로 급성장했던 경리단길은 임대료가 단기간에 급등하며 소규모 개성 점포가 폐업하고, 인근 신흥 상권(연남동 등)으로 수요가 분산되며 쇠퇴 국면에 접어들었다.",
+    "tags": ["임대료상승", "상권이동", "SNS버즈감소", "공실증가"]
+  },
+  {
+    "case_id": "ikseondong_2017_2021",
+    "region_name": "익선동",
+    "district_name": "종로구",
+    "region_code": null,
+    "start_year": 2017,
+    "end_year": 2021,
+    "decline_type": "성장형",
+    "summary": "한옥 리모델링과 레트로 콘텐츠로 신흥 상권으로 성장",
+    "description": "노후 한옥 밀집지역이었던 익선동은 한옥을 개조한 카페·음식점이 들어서며 레트로 감성의 관광형 상권으로 재탄생, 유동인구와 매출이 지속 성장했다.",
+    "tags": ["레트로", "한옥리모델링", "관광상권", "MZ세대유입"]
+  }
+]

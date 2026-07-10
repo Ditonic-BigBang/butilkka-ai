@@ -100,7 +100,10 @@ class ReportGenerateResponse(BaseModel):
 # ─────────────────────────────────────────
 
 def get_report_service(settings: Settings = Depends(get_settings)) -> ReportService:
-    return create_report_service(openai_api_key=settings.openai_api_key)
+    return create_report_service(
+        openai_api_key=settings.openai_api_key,
+        chroma_db_dir=settings.chroma_db_dir,
+    )
 
 
 # ─────────────────────────────────────────
