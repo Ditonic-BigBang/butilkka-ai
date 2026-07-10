@@ -34,14 +34,16 @@ class ReportService:
     ) -> dict:
         """리포트 생성 파이프라인"""
 
-        # 1. Tavily 뉴스 검색 (구 단위, 최근 3개월)
-        query = f"{district_name} 상권"
-        articles = await news_service.search_news(query=query, max_results=10, days=90)
+        # 1. Tavily 뉴스 검색 (구 단위, 최근 3개월, 8개 선행 신호 카테고리 확장 검색)
+        articles = await news_service.search_by_categories(district_name=district_name, days=90)
 
         # 2. FAISS 인덱스 생성
         if articles:
             texts = [f"{a['title']} {a['content']}" for a in articles]
-            metadatas = [{"url": a["url"], "title": a["title"]} for a in articles]
+            metadatas = [
+                {"url": a["url"], "title": a["title"], "category": a.get("category")}
+                for a in articles
+            ]
             self.rag.create_index(texts=texts, metadatas=metadatas)
 
         # 3. LLM 호출 1: 전망 + 요약
@@ -166,10 +168,14 @@ class ReportService:
         decline_type: str,
         context: dict
     ) -> dict:
-        """LLM 호출 2: 원인 + 시그널"""
-        rag_context = self.rag.get_context("상권 변화 원인 시그널 트렌드", k=3)
+        """LLM 호출 2: 선행 신호 + 원인 (다음 분기 예측용 — 과거 분기를 사후 설명하는 게 아님)"""
+        rag_context = self.rag.get_context("상권 변화 원인 시그널 트렌드", k=6)
 
-        prompt = f"""당신은 상권 분석 전문가입니다.
+        category_checklist = "\n".join(f"- {c}" for c in news_service.CATEGORY_QUERIES)
+
+        prompt = f"""당신은 상권 분석 전문가입니다. 이 리포트는 다음 분기 상권 전망을 예측하기 위한
+선행 분석입니다. 이미 확정된 과거 분기를 사후적으로 설명하는 것이 아니라, 지금 막 나타나고
+있는 조짐이 다음 분기에 어떤 영향을 줄지 파악하는 것이 목적입니다.
 
 ## 분석 대상
 - 지역: {district_name} {region_name}
@@ -184,21 +190,36 @@ class ReportService:
 ## 관련 뉴스/정보
 {rag_context if rag_context else "관련 정보 없음"}
 
+## 참고할 선행 신호 축 (분류 카테고리일 뿐, 이 이름을 그대로 title에 쓰지 말 것)
+{category_checklist}
+
 ## 요청
-상권 변화의 원인과 시그널을 JSON 형식으로 응답하세요:
+아래 순서로 판단해서 JSON으로만 응답하세요:
+1. 먼저 위 뉴스에서 다음 분기에 영향을 줄 만한 구체적 사실(선행 신호)을 뽑는다.
+2. 그 신호들을 근거로, 어떤 구체적 요인이 얼마나 심각하게 상권에 영향을 미치는지(원인) 해석한다.
+
+**중요**: 이 상권의 현재 유형은 "{decline_type}"이다. signals/causes는 반드시 이 유형을
+설명하거나 다음 분기에 강화할 방향으로만 작성한다. 뉴스가 반대 방향(예: 쇠퇴형인데 상권
+활성화 정책·개발 호재 뉴스만 있는 경우)이면 그 뉴스를 원인으로 삼지 말고, 대신 주어진
+지표(매출/유동인구/폐업률 등) 변화를 근거로 signals/causes를 구성한다.
+
 {{
-    "causes": [
-        {{"title": "원인 제목 (20자 이내)", "level": "높음/중간/낮음", "description": "설명 (50자 이내)"}},
+    "signals": [
+        {{"title": "선행 신호 (뉴스 기반 짧은 문구, 25자 이내, 완전한 문장 아님)"}},
         ...
     ],
-    "signals": [
-        {{"title": "시그널 제목 (20자 이내)", "description": "설명 (50자 이내)"}},
+    "causes": [
+        {{"title": "구체적 원인 요인 이름 (25자 이내, 완전한 문장 아님)", "level": "높음/중간/낮음"}},
         ...
     ]
 }}
 
-- causes: 2~3개 (level은 반드시 "높음", "중간", "낮음" 중 하나)
-- signals: 2~3개"""
+- signals: 2~3개. 뉴스에서 실제로 확인된 사실만 (관련 뉴스 없으면 지표 기반 조짐으로 대체 가능)
+- causes: 2~3개. level은 반드시 "높음", "중간", "낮음" 중 하나
+- causes의 title은 "재개발/도시계획", "부동산/임대료" 같은 위 카테고리 이름 자체를 쓰면 안 됨.
+  반드시 신호에서 확인된 구체적 내용을 담은 이름으로 작성할 것
+  (예: 카테고리가 "부동산/임대료"라면 title은 "임대료 급등 및 젠트리피케이션"처럼 구체화)
+- title은 UI에 한 줄로 표시되므로 설명 문장이 아니라 짧은 명사구로 작성"""
 
         return self._call_llm_json(prompt)
 

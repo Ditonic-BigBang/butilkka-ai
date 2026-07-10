@@ -42,13 +42,13 @@ class CauseItem(BaseModel):
     """report_cause 테이블"""
     title: str
     level: str          # 높음/중간/낮음
-    description: str
+    description: str = ""  # 선행 원인은 title+level만 사용, 상세 설명 불필요
 
 
 class SignalItem(BaseModel):
     """report_signal 테이블"""
     title: str
-    description: str
+    description: str = ""  # 선행 신호는 title 한 줄만 사용, 상세 설명 불필요
 
 
 class DecisionReasons(BaseModel):
