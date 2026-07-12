@@ -1,0 +1,48 @@
+name: Deploy AI to AWS EC2
+
+on:
+  push:
+    branches:
+      - deploy/aws
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.AI_EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.AI_EC2_SSH_KEY }}
+          script: |
+            cd ~
+
+            # butilkka-ai 저장소 clone 또는 pull
+            if [ -d "butilkka-ai" ]; then
+              cd butilkka-ai
+              git fetch origin
+              git checkout deploy/aws
+              git pull origin deploy/aws
+              cd ..
+            else
+              git clone -b deploy/aws https://github.com/Ditonic-BigBang/butilkka-ai.git
+            fi
+
+            # 환경변수 파일 생성
+            cat > butilkka-ai/.env << 'EOF'
+            OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+            TAVILY_API_KEY=${{ secrets.TAVILY_API_KEY }}
+            HOST=0.0.0.0
+            PORT=8000
+            REDIS_URL=redis://redis:6379
+            EOF
+
+            # Docker Compose 실행 (redis + fastapi, chroma_db/models는 볼륨으로 영속화됨)
+            cd butilkka-ai
+            docker-compose down || true
+            docker-compose up --build -d
+
+            # 정리
+            docker image prune -f
