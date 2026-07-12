@@ -23,6 +23,15 @@ class ReportContext(BaseModel):
     top_gender: str | None = None             # 주요 성별
 
 
+class QuarterlyMetrics(BaseModel):
+    """8분기 이력 (오래된→최근 순). Spring이 commercial_stats에서 조회해서 전달.
+    없으면 다음 분기 예측은 스킵되고 나머지 리포트는 그대로 생성됨."""
+    sales_qoq: list[float]
+    foot_traffic: list[float]
+    store_count: list[float]
+    closure_rate: list[float]
+
+
 class ReportGenerateRequest(BaseModel):
     """리포트 생성 요청"""
     region_code: str         # 상권 코드 (10자리)
@@ -34,6 +43,7 @@ class ReportGenerateRequest(BaseModel):
     score: int               # 0~100
     decline_type: str        # 성장/정체/쇠퇴
     context: ReportContext
+    quarterly_history: QuarterlyMetrics | None = None
 
 
 # ─── 하위 테이블 스키마 ───
@@ -94,6 +104,10 @@ class ReportGenerateResponse(BaseModel):
     similar_cases: list[SimilarCaseItem]
     alternative_regions: list[AlternativeRegionItem]
 
+    # 다음 분기 예측 (quarterly_history 없으면 둘 다 null)
+    predicted_trend: str | None = None       # 성장/유지/쇠퇴
+    predicted_next_grade: str | None = None  # A~E
+
 
 # ─────────────────────────────────────────
 # Dependencies
@@ -142,7 +156,8 @@ async def generate_report(
             grade=request.grade,
             score=request.score,
             decline_type=request.decline_type,
-            context=request.context.model_dump()
+            context=request.context.model_dump(),
+            quarterly_history=request.quarterly_history.model_dump() if request.quarterly_history else None,
         )
 
         return ReportGenerateResponse(
@@ -155,7 +170,9 @@ async def generate_report(
             signals=[SignalItem(**s) for s in result.get("signals", [])],
             decision_reasons=DecisionReasons(**result.get("decision_reasons", {})),
             similar_cases=[SimilarCaseItem(**s) for s in result.get("similar_cases", [])],
-            alternative_regions=[AlternativeRegionItem(**a) for a in result.get("alternative_regions", [])]
+            alternative_regions=[AlternativeRegionItem(**a) for a in result.get("alternative_regions", [])],
+            predicted_trend=result.get("predicted_trend"),
+            predicted_next_grade=result.get("predicted_next_grade"),
         )
 
     except Exception as e:

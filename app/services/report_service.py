@@ -7,6 +7,7 @@ from app.services.news_service import news_service
 from app.services.rag_service import RAGService
 from app.services.cache_service import get_cache_service
 from app.services.case_service import get_case_service
+from app.services.prediction_service import trend_prediction_service
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,8 @@ class ReportService:
         grade: str,           # A~E
         score: int,           # 0~100
         decline_type: str,    # 성장형/순환형/쇠퇴형/정체형
-        context: dict
+        context: dict,
+        quarterly_history: dict = None,  # 8분기 이력 (있으면 다음 분기 트렌드 예측)
     ) -> dict:
         """리포트 생성 파이프라인"""
 
@@ -112,7 +114,24 @@ class ReportService:
         except Exception as e:
             logger.warning(f"생성 리포트 벡터 색인 실패 (무시하고 계속): {e}")
 
-        # 8. 결과 조합
+        # 8. 다음 분기 예상 등급 (8분기 이력 있을 때만, 실패해도 응답엔 영향 없음)
+        predicted_trend = None
+        predicted_next_grade = None
+        if quarterly_history:
+            try:
+                predicted_trend = trend_prediction_service.predict_trend(
+                    sales_qoq=quarterly_history["sales_qoq"],
+                    foot_traffic=quarterly_history["foot_traffic"],
+                    store_count=quarterly_history["store_count"],
+                    closure_rate=quarterly_history["closure_rate"],
+                    adjustments=cause_signal_result.get("metric_adjustments", {}),
+                )
+                if predicted_trend:
+                    predicted_next_grade = trend_prediction_service.next_grade(grade, predicted_trend)
+            except Exception as e:
+                logger.warning(f"다음 분기 예측 실패 (무시하고 계속): {e}")
+
+        # 9. 결과 조합
         return {
             "summary": outlook_result.get("summary", ""),
             "ai_outlook": outlook_result.get("ai_outlook", ""),
@@ -124,6 +143,8 @@ class ReportService:
             "decision_reasons": decision_result.get("reasons", {}),
             "similar_cases": similar_cases,
             "alternative_regions": alternative_regions,
+            "predicted_trend": predicted_trend,
+            "predicted_next_grade": predicted_next_grade,
         }
 
     def _call_outlook_summary(
@@ -211,7 +232,13 @@ class ReportService:
     "causes": [
         {{"title": "구체적 원인 요인 이름 (25자 이내, 완전한 문장 아님)", "level": "높음/중간/낮음"}},
         ...
-    ]
+    ],
+    "metric_adjustments": {{
+        "sales_qoq_pct": 0.0,
+        "foot_traffic_pct": 0.0,
+        "store_count_pct": 0.0,
+        "closure_rate_pct": 0.0
+    }}
 }}
 
 - signals: 2~3개. 뉴스에서 실제로 확인된 사실만 (관련 뉴스 없으면 지표 기반 조짐으로 대체 가능)
@@ -219,7 +246,10 @@ class ReportService:
 - causes의 title은 "재개발/도시계획", "부동산/임대료" 같은 위 카테고리 이름 자체를 쓰면 안 됨.
   반드시 신호에서 확인된 구체적 내용을 담은 이름으로 작성할 것
   (예: 카테고리가 "부동산/임대료"라면 title은 "임대료 급등 및 젠트리피케이션"처럼 구체화)
-- title은 UI에 한 줄로 표시되므로 설명 문장이 아니라 짧은 명사구로 작성"""
+- title은 UI에 한 줄로 표시되므로 설명 문장이 아니라 짧은 명사구로 작성
+- metric_adjustments: signals/causes에서 확인된 조짐이 **다음 분기** 각 지표에 미칠 영향을
+  -0.3~0.3 범위의 비율로 추정 (악화면 음수, 개선이면 양수). 관련된 신호가 없는 지표는 0.
+  확대해석 금지 — 명확한 근거가 있는 지표만 0이 아닌 값을 준다."""
 
         return self._call_llm_json(prompt)
 
