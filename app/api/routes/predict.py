@@ -53,38 +53,20 @@ def list_models():
 def predict_batch(request: GradeBatchRequest):
     """
     등급 배치 추론
-    - pkl 모델로 전체 지역 등급/점수/유형 계산
+    - 휴리스틱으로 전체 지역 등급/점수/유형 계산 (모델 자동 갱신은 추후 작업)
     - Redis에 개별 등급 + all_grades 캐싱
     """
     if not request.items:
         raise HTTPException(status_code=400, detail="items가 비어있습니다")
 
     try:
-        # 피처 추출 (모델 입력용)
-        features = []
-        for item in request.items:
-            features.append({
-                "sales_delta": item.sales_delta,
-                "foot_traffic": item.foot_traffic,
-                "store_count": item.store_count or 0,
-                "closure_rate": item.closure_rate or 0,
-            })
-
-        # 모델 예측
-        predictions = model_service.predict(
-            model_name="decline_grade",
-            data=features
-        )
-
         # 결과 매핑 + 캐싱
+        # NOTE: 등급/점수/유형은 당분간 아래 휴리스틱으로 계산 (모델 자동 갱신은 추후 작업)
         cache = get_cache_service()
         results = []
         all_grades = []
 
-        for item, pred in zip(request.items, predictions):
-            # TODO: 실제 모델 출력에 맞게 수정 필요
-            # 현재는 임시 로직으로 score 기반 grade/decline_type 계산
-
+        for item in request.items:
             # score 계산 (0~100)
             score = _calculate_score(item.sales_delta, item.foot_traffic, item.closure_rate or 0)
 
@@ -128,8 +110,6 @@ def predict_batch(request: GradeBatchRequest):
 
         return GradeBatchResponse(results=results, cached=True)
 
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=f"모델 없음: {e}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
