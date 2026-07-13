@@ -2,7 +2,6 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional
 from app.services.report_service import create_report_service, ReportService
-from app.services.cache_service import get_cache_service
 from app.core.config import get_settings, Settings
 
 router = APIRouter(prefix="/report", tags=["AI Report"])
@@ -134,18 +133,8 @@ async def generate_report(
     - Tavily 뉴스 검색
     - FAISS 임베딩
     - 3회 LLM 호출 (전망/요약, 원인/시그널, 의사결정)
-    - all_grades 캐시로 유사사례/대안지역
+    - all_grades 캐시 있으면 대안지역 추천에 사용 (없어도 나머지는 정상 생성됨)
     """
-    cache = get_cache_service()
-
-    # all_grades 캐시 확인
-    all_grades = cache.get_all_grades(request.year, request.quarter)
-    if all_grades is None:
-        raise HTTPException(
-            status_code=400,
-            detail=f"등급 데이터 없음. POST /api/grade/batch를 먼저 실행하세요. (year={request.year}, quarter={request.quarter})"
-        )
-
     try:
         result = await report_service.generate(
             region_code=request.region_code,
