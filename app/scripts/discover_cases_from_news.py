@@ -62,11 +62,21 @@ JSON 형식으로만 응답:
             "end_year": 2019,
             "decline_type": "쇠퇴형 또는 성장형",
             "summary": "한 줄 요약 (50자 이내)",
-            "description": "상세 설명 (2~3문장, 원인과 실제 결과 포함)",
+            "description": "상세 설명 (아래 5문장 구조로 작성)",
             "tags": ["키워드1", "키워드2", "키워드3", "키워드4"]
         }}
     ]
-}}"""
+}}
+
+description은 아래 5문장 구조로 작성 (각 항목 한 문장씩, 총 5문장, 전부 과거형/확정형으로
+서술 — 이미 끝난 사례이므로 "예상된다", "될 것이다" 같은 예측 표현은 쓰지 않는다):
+1) 어떤 상권에서 무슨 상황이었는지 (개요)
+2) 그 상황의 구체적 원인
+3) 시간에 따라 어떻게 전개됐는지
+4) 실제로 어떤 결과가 나왔는지 (확정된 결과)
+5) 그 결과의 규모나 의미 (수치·사회적 의미 등, 기사에 있으면 포함)
+기사에 정보가 부족해 일부 문장을 채우기 어려우면 자연스럽게 간략히 서술하되, 5문장 구조
+자체는 유지한다."""
 
     try:
         response = client.chat.completions.create(
@@ -85,6 +95,51 @@ JSON 형식으로만 응답:
         return []
 
 
+def enrich_with_stats(client: OpenAI, case: dict, articles: list[dict]) -> str:
+    """추가 검색된 신뢰 가능한 기사로 description 5번 문장(수치·규모)을 보강.
+    자료에 실제 수치가 없으면 지어내지 않고 기존 설명을 그대로 유지."""
+    if not articles:
+        return case["description"]
+
+    articles_text = "\n\n".join(
+        f"[{i + 1}] {a['title']}\n{a['content']}" for i, a in enumerate(articles)
+    )
+
+    prompt = f"""기존에 작성된 상권 사례 설명입니다:
+
+{case['description']}
+
+아래는 이 사례의 수치·통계를 확인하기 위해 추가로 검색한 신뢰 가능한 언론사 기사입니다:
+
+{articles_text}
+
+## 요청
+위 설명의 5번째 문장(규모나 의미)에 구체적 수치가 없거나 부족하다면, 위 추가 자료에서
+**실제로 확인되는** 수치(매출, 폐업률, 공실률, 점포수, 임대료 등)가 있는 경우에만 반영해서
+전체 설명(5문장)을 다시 작성하세요.
+
+**중요**: 추가 자료에 수치가 없으면 절대 지어내지 말고, 원래 설명을 그대로 반환하세요.
+확실하지 않은 수치를 추측해서 넣는 것보다 수치 없이 정성적으로 서술하는 게 낫습니다.
+
+JSON으로만 응답: {{"description": "..."}}"""
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "JSON 형식으로만 응답하세요. 마크다운 코드블록 없이 순수 JSON만 출력하세요."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.2,
+            response_format={"type": "json_object"},
+        )
+        result = json.loads(response.choices[0].message.content)
+        return result.get("description") or case["description"]
+    except Exception as e:
+        logger.warning(f"수치 보강 실패, 기존 설명 유지: {e}")
+        return case["description"]
+
+
 async def discover_all(client: OpenAI) -> list[dict]:
     all_cases = []
     for query in CASE_DISCOVERY_QUERIES:
@@ -96,6 +151,14 @@ async def discover_all(client: OpenAI) -> list[dict]:
         cases = extract_cases(client, articles)
         logger.info(f"  → 추출된 사례: {len(cases)}건")
         all_cases.extend(cases)
+
+    # 사례별로 수치 보강용 추가 검색 (news_service는 신뢰 가능한 언론사 도메인만 검색함)
+    for case in all_cases:
+        if not case.get("region_name"):
+            continue
+        followup_query = f"{case['region_name']} 상권 매출 통계"
+        followup_articles = await news_service.search_news(query=followup_query, max_results=5, days=3650)
+        case["description"] = enrich_with_stats(client, case, followup_articles)
 
     return all_cases
 
