@@ -340,9 +340,14 @@ class ReportService:
         causes: list[dict],
         exclude_code: str
     ) -> list[dict]:
-        """유사 사례 찾기 (벡터 검색: 큐레이션 사례 + 과거 생성 리포트)"""
+        """유사 사례 찾기 (벡터 검색: 큐레이션 사례 + 과거 생성 리포트)
+
+        지역명/유형이 아니라 '원인'이 비슷한 사례를 찾는 게 목적이라, 쿼리를
+        원인(causes) 위주로 구성한다. 지역명을 섞으면 엉뚱하게 지명 자체로
+        매칭되는 경우가 생겨서 제외 (예: "명동"이 들어간 다른 사례로 오매칭).
+        """
         cause_titles = " ".join(c.get("title", "") for c in causes)
-        query = f"{district_name} {region_name} {decline_type} {cause_titles}".strip()
+        query = cause_titles or f"{district_name} {region_name} {decline_type}"
 
         try:
             results = self.case_service.search_similar(query=query, k=5, exclude_region_code=exclude_code)
