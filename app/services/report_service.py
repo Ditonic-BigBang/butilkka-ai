@@ -345,7 +345,7 @@ class ReportService:
         query = f"{district_name} {region_name} {decline_type} {cause_titles}".strip()
 
         try:
-            results = self.case_service.search_similar(query=query, k=3, exclude_region_code=exclude_code)
+            results = self.case_service.search_similar(query=query, k=5, exclude_region_code=exclude_code)
         except Exception as e:
             logger.warning(f"유사 사례 벡터 검색 실패, 빈 목록 반환: {e}")
             return []
