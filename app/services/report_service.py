@@ -217,21 +217,22 @@ class ReportService:
 ## 요청
 아래 순서로 판단해서 JSON으로만 응답하세요:
 1. 먼저 위 뉴스에서 다음 분기에 영향을 줄 만한 구체적 사실(선행 신호)을 뽑는다.
-2. 그 신호들을 근거로, 어떤 구체적 요인이 얼마나 심각하게 상권에 영향을 미치는지(원인) 해석한다.
+2. 그 신호 하나하나에 대해, 그 신호가 상권에 어떤 요인으로 얼마나 심각하게 영향을 미치는지(원인) 해석한다.
+   즉 신호와 원인은 반드시 1:1로 짝지어진다 — signal_causes 배열의 각 항목이 "이 신호 → 이 원인"이다.
 
-**중요**: 이 상권의 현재 유형은 "{decline_type}"이다. signals/causes는 반드시 이 유형을
+**중요**: 이 상권의 현재 유형은 "{decline_type}"이다. signal/cause는 반드시 이 유형을
 설명하거나 다음 분기에 강화할 방향으로만 작성한다. 뉴스가 반대 방향(예: 쇠퇴형인데 상권
 활성화 정책·개발 호재 뉴스만 있는 경우)이면 그 뉴스를 원인으로 삼지 말고, 대신 주어진
-지표(매출/유동인구/폐업률 등) 변화를 근거로 signals/causes를 구성한다.
+지표(매출/유동인구/폐업률 등) 변화를 근거로 signal_causes를 구성한다.
 
 {{
-    "signals": [
-        {{"title": "선행 신호 (뉴스 기반 짧은 문구, 25자 이내, 완전한 문장 아님)"}},
-        ...
-    ],
-    "causes": [
-        {{"title": "구체적 원인 요인 이름 (25자 이내, 완전한 문장 아님)", "level": "높음/중간/낮음"}},
-        ...
+    "signal_causes": [
+        {{
+            "signal": "선행 신호 (뉴스 기반 짧은 문구, 25자 이내, 완전한 문장 아님)",
+            "cause": "그 신호에 따른 구체적 원인 요인 이름 (25자 이내, 완전한 문장 아님)",
+            "level": "높음/중간/낮음"
+        }},
+        ... (정확히 3개)
     ],
     "metric_adjustments": {{
         "sales_qoq_pct": 0.0,
@@ -241,17 +242,25 @@ class ReportService:
     }}
 }}
 
-- signals: 2~3개. 뉴스에서 실제로 확인된 사실만 (관련 뉴스 없으면 지표 기반 조짐으로 대체 가능)
-- causes: 2~3개. level은 반드시 "높음", "중간", "낮음" 중 하나
-- causes의 title은 "재개발/도시계획", "부동산/임대료" 같은 위 카테고리 이름 자체를 쓰면 안 됨.
-  반드시 신호에서 확인된 구체적 내용을 담은 이름으로 작성할 것
-  (예: 카테고리가 "부동산/임대료"라면 title은 "임대료 급등 및 젠트리피케이션"처럼 구체화)
-- title은 UI에 한 줄로 표시되므로 설명 문장이 아니라 짧은 명사구로 작성
-- metric_adjustments: signals/causes에서 확인된 조짐이 **다음 분기** 각 지표에 미칠 영향을
+- signal_causes: **반드시 정확히 3개**. 뉴스에서 실제로 확인된 사실 기반으로 (관련 뉴스가
+  3개보다 적으면 나머지는 지표 기반 조짐으로 채워서라도 3개를 맞춘다)
+- level은 반드시 "높음", "중간", "낮음" 중 하나
+- cause는 "재개발/도시계획", "부동산/임대료" 같은 카테고리 이름 자체를 쓰면 안 됨.
+  반드시 그 signal에서 확인된 구체적 내용을 담은 이름으로 작성할 것
+  (예: signal이 임대료 관련이면 cause는 "임대료 급등 및 젠트리피케이션"처럼 구체화)
+- signal/cause 모두 UI에 한 줄로 표시되므로 설명 문장이 아니라 짧은 명사구로 작성
+- metric_adjustments: signal_causes에서 확인된 조짐이 **다음 분기** 각 지표에 미칠 영향을
   -0.3~0.3 범위의 비율로 추정 (악화면 음수, 개선이면 양수). 관련된 신호가 없는 지표는 0.
   확대해석 금지 — 명확한 근거가 있는 지표만 0이 아닌 값을 준다."""
 
-        return self._call_llm_json(prompt)
+        result = self._call_llm_json(prompt)
+        signal_causes = result.get("signal_causes", [])
+        result["signals"] = [{"title": sc.get("signal", "")} for sc in signal_causes]
+        result["causes"] = [
+            {"title": sc.get("cause", ""), "level": sc.get("level", "중간")}
+            for sc in signal_causes
+        ]
+        return result
 
     def _call_decision(
         self,
@@ -289,7 +298,7 @@ class ReportService:
 {{
     "recommendation": "버티기 또는 이동",
     "title": "권고 제목 (예: '현 위치 유지 권고', '이전 검토 필요')",
-    "description": "권고 설명 (5~6줄, 구체적 근거 포함)",
+    "description": "권고 설명 (2~3문장, 구체적 근거 포함)",
     "reasons": {{
         "reason_1": "첫 번째 근거 (30자 이내)",
         "reason_2": "두 번째 근거 (30자 이내)",
@@ -344,6 +353,7 @@ class ReportService:
         return [
             {
                 "region_code": meta["region_code"],
+                "region_name": meta.get("region_name", ""),
                 "summary": meta.get("summary", ""),
                 "description": meta.get("description"),
                 "start_year": meta.get("start_year"),
@@ -363,38 +373,50 @@ class ReportService:
         all_grades: list[dict],
         exclude_code: str
     ) -> list[dict]:
-        """대안 지역 찾기 (더 좋은 등급)"""
+        """대안 지역 찾기 (더 좋은 등급 우선, 부족하면 점수 높은 순으로 최대 5개까지 채움)"""
         grade_order = ["A", "B", "C", "D", "E"]
 
         try:
             current_idx = grade_order.index(current_grade)
         except ValueError:
-            return []
+            current_idx = None
 
-        alternatives = []
+        candidates = [item for item in all_grades if item["region_code"] != exclude_code]
 
-        for item in all_grades:
-            if item["region_code"] == exclude_code:
-                continue
-
-            item_grade = item.get("grade", "C")
+        def grade_idx(item: dict) -> int:
             try:
-                item_idx = grade_order.index(item_grade)
+                return grade_order.index(item.get("grade", "C"))
             except ValueError:
-                continue
+                return len(grade_order)
 
-            if item_idx < current_idx:  # 더 좋은 등급 (A < B < C < D < E)
-                item_score = item.get("score", 50)
-                alternatives.append({
-                    "region_code": item["region_code"],
-                    "reason": f"{item_grade}등급 상권 (현재보다 양호)",
-                    "stat": f"점수 {item_score}점"
-                })
+        # 더 좋은 등급 우선, 그다음 점수 높은 순
+        if current_idx is not None:
+            better = sorted(
+                (i for i in candidates if grade_idx(i) < current_idx),
+                key=lambda i: -i.get("score", 0)
+            )
+        else:
+            better = []
 
-            if len(alternatives) >= 3:
-                break
+        rest = sorted(
+            (i for i in candidates if i not in better),
+            key=lambda i: -i.get("score", 0)
+        )
 
-        return alternatives
+        picked = (better + rest)[:5]
+
+        return [
+            {
+                "region_code": item["region_code"],
+                "reason": (
+                    f"{item.get('grade', 'C')}등급 상권 (현재보다 양호)"
+                    if current_idx is not None and grade_idx(item) < current_idx
+                    else f"{item.get('grade', 'C')}등급 상권"
+                ),
+                "stat": f"점수 {item.get('score', 50)}점"
+            }
+            for item in picked
+        ]
 
 
 def create_report_service(openai_api_key: str, chroma_db_dir: str = "chroma_db") -> ReportService:

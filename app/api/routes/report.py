@@ -70,6 +70,7 @@ class DecisionReasons(BaseModel):
 class SimilarCaseItem(BaseModel):
     """report_similar_cases 테이블"""
     region_code: str
+    region_name: str = ""  # 행정동 마스터 매핑 없이 자유 텍스트로 노출 (큐레이션 사례는 EXT-CASE로 코드가 겹쳐서 이름으로 구분 필요)
     summary: str
     description: str | None = None
     start_year: int | None = None
