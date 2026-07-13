@@ -97,24 +97,7 @@ class ReportService:
             exclude_code=region_code
         )
 
-        # 7. 생성된 리포트를 다음 유사사례 검색을 위해 색인 (실패해도 응답에 영향 없음)
-        try:
-            self.case_service.upsert_report(
-                region_code=region_code,
-                region_name=region_name,
-                district_name=district_name,
-                year=year,
-                quarter=quarter,
-                grade=grade,
-                decline_type=decline_type,
-                summary=outlook_result.get("summary", ""),
-                ai_outlook=outlook_result.get("ai_outlook", ""),
-                causes=cause_signal_result.get("causes", []),
-            )
-        except Exception as e:
-            logger.warning(f"생성 리포트 벡터 색인 실패 (무시하고 계속): {e}")
-
-        # 8. 다음 분기 예상 등급 (8분기 이력 있을 때만, 실패해도 응답엔 영향 없음)
+        # 7. 다음 분기 예상 등급 (8분기 이력 있을 때만, 실패해도 응답엔 영향 없음)
         predicted_trend = None
         predicted_next_grade = None
         if quarterly_history:
@@ -131,7 +114,7 @@ class ReportService:
             except Exception as e:
                 logger.warning(f"다음 분기 예측 실패 (무시하고 계속): {e}")
 
-        # 9. 결과 조합
+        # 8. 결과 조합
         return {
             "summary": outlook_result.get("summary", ""),
             "ai_outlook": outlook_result.get("ai_outlook", ""),

@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 
 
 class CaseService:
-    """Chroma 기반 유사사례 벡터 스토어 (영속, 큐레이션 사례 + 과거 생성 리포트)"""
+    """Chroma 기반 유사사례 벡터 스토어 (영속, 실제 뉴스 기반으로 발굴한 확정된 과거 사례만 저장)"""
 
     COLLECTION_NAME = "commercial_district_cases"
     # 큐레이션 외부 사례가 공유하는 region_code (Spring regions 테이블에 1건만 미리 등록해두면
@@ -69,43 +69,9 @@ class CaseService:
         }
         self._upsert(doc_id, text, metadata)
 
-    def upsert_report(
-        self,
-        region_code: str,
-        region_name: str,
-        district_name: str,
-        year: int,
-        quarter: int,
-        grade: str,
-        decline_type: str,
-        summary: str,
-        ai_outlook: str,
-        causes: list[dict],
-    ) -> None:
-        """생성된 리포트를 다음 유사사례 검색을 위해 색인 (동일 지역/연도/분기 재생성 시 덮어씀)"""
-        doc_id = f"report:{region_code}:{year}:{quarter}"
-        cause_titles = " ".join(c.get("title", "") for c in causes)
-        text = f"{region_name} {district_name} {decline_type} {summary} {ai_outlook} {cause_titles}"
-
-        metadata = {
-            "source": "generated_report",
-            "region_code": region_code,
-            "region_name": region_name,
-            "district_name": district_name,
-            "decline_type": decline_type,
-            "start_year": year,
-            "end_year": year,
-            "summary": summary,
-            "description": ai_outlook,
-            "tag1": grade,
-            "tag2": decline_type,
-            "tag3": None,
-            "tag4": None,
-        }
-        self._upsert(doc_id, text, metadata)
-
     def search_similar(self, query: str, k: int, exclude_region_code: str) -> list[dict]:
-        """시맨틱 유사도 검색 (같은 region_code 제외, 중복 제거)"""
+        """시맨틱 유사도 검색 (큐레이션 사례만 대상 — 확정된 결과가 있는 사례만 유사사례로 씀.
+        같은 region_code 제외, 중복 제거)"""
         store = self._get_store()
         try:
             raw = store.similarity_search_with_score(query, k=k * 3)
@@ -117,17 +83,19 @@ class CaseService:
         results = []
         for doc, score in sorted(raw, key=lambda x: x[1]):
             meta = doc.metadata
+            if meta.get("source") != "curated_case":
+                continue  # 과거 생성 리포트는 예측 스냅샷이라 확정된 사례가 아님 — 제외
+
             region_code = meta.get("region_code")
             if region_code == exclude_region_code:
                 continue
 
             # 큐레이션 사례는 region_code(EXT-CASE)를 공유하므로 doc_id로 구분해야
             # 서로 다른 사례가 "같은 지역"으로 취급되어 걸러지지 않는다.
-            # 과거 생성 리포트는 같은 지역이 여러 건 나오지 않도록 region_code로 dedup.
-            dedup_key = meta.get("doc_id") if meta.get("source") == "curated_case" else region_code
-            if dedup_key in seen:
+            doc_id = meta.get("doc_id")
+            if doc_id in seen:
                 continue
-            seen.add(dedup_key)
+            seen.add(doc_id)
 
             # 저장 시 None -> "" 로 치환했던 것을 복원
             results.append({k: (None if v == "" else v) for k, v in meta.items()})
