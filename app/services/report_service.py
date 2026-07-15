@@ -12,6 +12,19 @@ from app.services.prediction_service import trend_prediction_service
 logger = logging.getLogger(__name__)
 
 
+def _normalize_region_code(region_code: Optional[str]) -> str:
+    if not region_code:
+        return ""
+    code = str(region_code).strip()
+    if len(code) == 10 and code.isdigit():
+        return code[:5]
+    return code
+
+
+def _normalize_region_name(region_name: Optional[str], district_name: Optional[str]) -> str:
+    return (region_name or district_name or "").strip()
+
+
 class ReportService:
     """AI 리포트 생성 서비스 (ERD 기준, 3회 LLM 호출)"""
 
@@ -35,9 +48,12 @@ class ReportService:
         quarterly_history: dict = None,  # 8분기 이력 (있으면 다음 분기 트렌드 예측)
     ) -> dict:
         """리포트 생성 파이프라인"""
+        normalized_region_code = _normalize_region_code(region_code)
+        normalized_region_name = _normalize_region_name(region_name, district_name)
+        normalized_district_name = normalized_region_name or district_name or region_name or ""
 
         # 1. Tavily 뉴스 검색 (구 단위, 최근 3개월, 8개 선행 신호 카테고리 확장 검색)
-        articles = await news_service.search_by_categories(district_name=district_name, days=90)
+        articles = await news_service.search_by_categories(district_name=normalized_district_name, days=90)
 
         # 2. FAISS 인덱스 생성
         if articles:
@@ -49,32 +65,38 @@ class ReportService:
             self.rag.create_index(texts=texts, metadatas=metadatas)
 
         # 3. LLM 호출 1: 전망 + 요약
+        normalized_context = {
+            **context,
+            "top_age_group": None,
+            "top_gender": None,
+        }
+
         outlook_result = self._call_outlook_summary(
-            region_name=region_name,
-            district_name=district_name,
+            region_name=normalized_region_name,
+            district_name=normalized_district_name,
             grade=grade,
             score=score,
             decline_type=decline_type,
-            context=context
+            context=normalized_context
         )
 
         # 4. LLM 호출 2: 원인 + 시그널
         cause_signal_result = self._call_cause_signal(
-            region_name=region_name,
-            district_name=district_name,
+            region_name=normalized_region_name,
+            district_name=normalized_district_name,
             grade=grade,
             decline_type=decline_type,
-            context=context
+            context=normalized_context
         )
 
         # 5. LLM 호출 3: 의사결정
         decision_result = self._call_decision(
-            region_name=region_name,
-            district_name=district_name,
+            region_name=normalized_region_name,
+            district_name=normalized_district_name,
             grade=grade,
             score=score,
             decline_type=decline_type,
-            context=context,
+            context=normalized_context,
             outlook=outlook_result.get("ai_outlook", "")
         )
 
@@ -83,18 +105,18 @@ class ReportService:
         all_grades = cache.get_all_grades(year, quarter) or []
 
         similar_cases = self._find_similar_cases(
-            region_name=region_name,
-            district_name=district_name,
+            region_name=normalized_region_name,
+            district_name=normalized_district_name,
             decline_type=decline_type,
             causes=cause_signal_result.get("causes", []),
-            exclude_code=region_code
+            exclude_code=normalized_region_code
         )
 
         alternative_regions = self._find_alternatives(
             current_grade=grade,
             decline_type=decline_type,
             all_grades=all_grades,
-            exclude_code=region_code
+            exclude_code=normalized_region_code
         )
 
         # 7. 다음 분기 예상 등급 (8분기 이력 있을 때만, 실패해도 응답엔 영향 없음)
@@ -340,8 +362,8 @@ class ReportService:
 
         return [
             {
-                "region_code": meta["region_code"],
-                "region_name": meta.get("region_name", ""),
+                "region_code": _normalize_region_code(meta.get("region_code") or meta.get("district_code") or exclude_code),
+                "region_name": (meta.get("district_name") or meta.get("region_name") or district_name or "").strip(),
                 "summary": meta.get("summary", ""),
                 "description": meta.get("description"),
                 "start_year": meta.get("start_year"),
@@ -395,7 +417,8 @@ class ReportService:
 
         return [
             {
-                "region_code": item["region_code"],
+                "region_code": _normalize_region_code(item.get("region_code")),
+                "region_name": (item.get("region_name") or item.get("district_name") or "").strip(),
                 "reason": (
                     f"{item.get('grade', 'C')}등급 상권 (현재보다 양호)"
                     if current_idx is not None and grade_idx(item) < current_idx

@@ -12,6 +12,7 @@ router = APIRouter(prefix="/grade", tags=["Grade Prediction"])
 
 class GradeItem(BaseModel):
     region_code: str
+    region_name: str | None = None
     year: int
     quarter: int
     sales_delta: float
@@ -98,6 +99,7 @@ def predict_batch(request: GradeBatchRequest):
 
             all_grades.append({
                 "region_code": item.region_code,
+                "region_name": item.region_name,
                 "grade": grade,
                 "score": score,
                 "decline_type": decline_type

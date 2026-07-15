@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 from typing import Optional
 from app.services.report_service import create_report_service, ReportService
 from app.core.config import get_settings, Settings
@@ -11,66 +11,91 @@ router = APIRouter(prefix="/report", tags=["AI Report"])
 # Request/Response 스키마 (ERD 기준)
 # ─────────────────────────────────────────
 
-class ReportContext(BaseModel):
+class AliasedModel(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+
+class ReportContext(AliasedModel):
     """Spring에서 전달하는 상권 지표"""
-    sales_delta: float | None = None          # 매출 변화율
-    foot_traffic_delta: float | None = None   # 유동인구 변화율
-    store_count_delta: float | None = None    # 점포수 변화율
-    closure_rate: float | None = None         # 폐업률
-    vacancy_rate: float | None = None         # 공실률
-    top_age_group: str | None = None          # 주요 연령대
-    top_gender: str | None = None             # 주요 성별
+    sales_delta: float | None = Field(default=None, alias="salesDelta")          # 매출 변화율
+    foot_traffic_delta: float | None = Field(default=None, alias="footTrafficDelta")   # 유동인구 변화율
+    store_count_delta: float | None = Field(default=None, alias="storeCountDelta")    # 점포수 변화율
+    closure_rate: float | None = Field(default=None, alias="closureRate")         # 폐업률
+    vacancy_rate: float | None = Field(default=None, alias="vacancyRate")         # 공실률
+    top_age_group: str | None = Field(default=None, alias="topAgeGroup")          # 주요 연령대
+    top_gender: str | None = Field(default=None, alias="topGender")             # 주요 성별
 
 
-class QuarterlyMetrics(BaseModel):
+class QuarterlyMetrics(AliasedModel):
     """8분기 이력 (오래된→최근 순). Spring이 commercial_stats에서 조회해서 전달.
     없으면 다음 분기 예측은 스킵되고 나머지 리포트는 그대로 생성됨."""
-    sales_qoq: list[float]
-    foot_traffic: list[float]
-    store_count: list[float]
-    closure_rate: list[float]
+    sales_qoq: list[float] = Field(alias="salesQoq")
+    foot_traffic: list[float] = Field(alias="footTraffic")
+    store_count: list[float] = Field(alias="storeCount")
+    closure_rate: list[float] = Field(alias="closureRate")
 
 
-class ReportGenerateRequest(BaseModel):
+class ReportGenerateRequest(AliasedModel):
     """리포트 생성 요청"""
-    region_code: str         # 상권 코드 (10자리)
-    region_name: str         # 행정동 이름
-    district_name: str       # 자치구 이름
+    region_code: str = Field(alias="regionCode")      # 구 코드 (5자리)
+    region_name: str = Field(alias="regionName")      # 구 이름
+    district_name: str | None = Field(default=None, alias="districtName")  # 구 이름
     year: int
     quarter: int
     grade: str               # A~E
     score: int               # 0~100
-    decline_type: str        # 성장/정체/쇠퇴
+    decline_type: str = Field(alias="declineType")   # 성장/정체/쇠퇴
     context: ReportContext
-    quarterly_history: QuarterlyMetrics | None = None
+    quarterly_history: QuarterlyMetrics | None = Field(default=None, alias="quarterlyHistory")
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_region_fields(cls, values):
+        if not isinstance(values, dict):
+            return values
+
+        region_code = values.get("regionCode") or values.get("region_code")
+        if isinstance(region_code, str):
+            region_code = region_code.strip()
+            if len(region_code) == 10 and region_code.isdigit():
+                values["regionCode"] = region_code[:5]
+                values["region_code"] = region_code[:5]
+
+        region_name = values.get("regionName") or values.get("region_name")
+        district_name = values.get("districtName") or values.get("district_name")
+        if not district_name and region_name:
+            values["districtName"] = region_name
+            values["district_name"] = region_name
+
+        return values
 
 
 # ─── 하위 테이블 스키마 ───
 
-class CauseItem(BaseModel):
+class CauseItem(AliasedModel):
     """report_cause 테이블"""
     title: str
     level: str          # 높음/중간/낮음
     description: str = ""  # 선행 원인은 title+level만 사용, 상세 설명 불필요
 
 
-class SignalItem(BaseModel):
+class SignalItem(AliasedModel):
     """report_signal 테이블"""
     title: str
     description: str = ""  # 선행 신호는 title 한 줄만 사용, 상세 설명 불필요
 
 
-class DecisionReasons(BaseModel):
+class DecisionReasons(AliasedModel):
     """report_decision_reasons 테이블"""
     reason_1: str | None = None
     reason_2: str | None = None
     reason_3: str | None = None
 
 
-class SimilarCaseItem(BaseModel):
+class SimilarCaseItem(AliasedModel):
     """report_similar_cases 테이블"""
-    region_code: str
-    region_name: str = ""  # 행정동 마스터 매핑 없이 자유 텍스트로 노출 (큐레이션 사례는 EXT-CASE로 코드가 겹쳐서 이름으로 구분 필요)
+    region_code: str = Field(alias="regionCode")
+    region_name: str = Field(default="", alias="regionName")
     summary: str
     description: str | None = None
     start_year: int | None = None
@@ -81,32 +106,33 @@ class SimilarCaseItem(BaseModel):
     tag4: str | None = None
 
 
-class AlternativeRegionItem(BaseModel):
+class AlternativeRegionItem(AliasedModel):
     """report_alternative_regions 테이블"""
-    region_code: str
+    region_code: str = Field(alias="regionCode")
+    region_name: str = Field(default="", alias="regionName")
     reason: str
     stat: str
 
 
-class ReportGenerateResponse(BaseModel):
+class ReportGenerateResponse(AliasedModel):
     """리포트 생성 응답 (reports 테이블 + 하위 테이블)"""
     # reports 테이블 필드
     summary: str                      # 한 줄 요약
-    ai_outlook: str                   # AI 종합 전망 (5~6줄)
-    decision_recommendation: str      # 버티기/이동
-    decision_title: str
-    decision_description: str
+    ai_outlook: str = Field(alias="aiOutlook")                   # AI 종합 전망 (5~6줄)
+    decision_recommendation: str = Field(alias="decisionRecommendation")      # 버티기/이동
+    decision_title: str = Field(alias="decisionTitle")
+    decision_description: str = Field(alias="decisionDescription")
 
     # 하위 테이블
     causes: list[CauseItem]
     signals: list[SignalItem]
-    decision_reasons: DecisionReasons
-    similar_cases: list[SimilarCaseItem]
-    alternative_regions: list[AlternativeRegionItem]
+    decision_reasons: DecisionReasons = Field(alias="decisionReasons")
+    similar_cases: list[SimilarCaseItem] = Field(alias="similarCases")
+    alternative_regions: list[AlternativeRegionItem] = Field(alias="alternativeRegions")
 
     # 다음 분기 예측 (quarterly_history 없으면 둘 다 null)
-    predicted_trend: str | None = None       # 성장/유지/쇠퇴
-    predicted_next_grade: str | None = None  # A~E
+    predicted_trend: str | None = Field(default=None, alias="predictedTrend")       # 성장/유지/쇠퇴
+    predicted_next_grade: str | None = Field(default=None, alias="predictedNextGrade")  # A~E
 
 
 # ─────────────────────────────────────────
@@ -140,7 +166,7 @@ async def generate_report(
         result = await report_service.generate(
             region_code=request.region_code,
             region_name=request.region_name,
-            district_name=request.district_name,
+            district_name=request.district_name or request.region_name,
             year=request.year,
             quarter=request.quarter,
             grade=request.grade,
