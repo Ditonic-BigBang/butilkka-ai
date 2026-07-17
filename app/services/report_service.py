@@ -260,9 +260,12 @@ class ReportService:
 
         result = self._call_llm_json(prompt)
         signal_causes = result.get("signal_causes", [])
-        result["signals"] = [{"title": sc.get("signal", "")} for sc in signal_causes]
+        result["signals"] = [
+            {"title": sc.get("signal", ""), "description": ""}
+            for sc in signal_causes
+        ]
         result["causes"] = [
-            {"title": sc.get("cause", ""), "level": sc.get("level", "중간")}
+            {"title": sc.get("cause", ""), "level": sc.get("level", "중간"), "description": ""}
             for sc in signal_causes
         ]
         return result

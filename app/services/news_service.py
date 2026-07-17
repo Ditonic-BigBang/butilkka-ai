@@ -101,8 +101,47 @@ class NewsService:
         district_name: str,
         days: int = 90,
         max_total: int = 20,
+        use_cache: bool = True,
     ) -> list[dict]:
-        """구 단위로 일반 상권 검색 + 8개 선행 신호 카테고리 검색을 동시 실행 후 병합"""
+        """
+        구 단위로 뉴스 검색 (캐시 우선)
+
+        1. Redis 캐시에서 먼저 조회
+        2. 캐시 미스 시 Tavily API 직접 호출 (폴백)
+        """
+        # 1. 캐시 조회 시도
+        if use_cache:
+            cached = self._get_from_cache(district_name, max_total)
+            if cached:
+                logger.info(f"캐시 히트: {district_name} → {len(cached)}건")
+                return cached
+
+        # 2. 캐시 미스: API 직접 호출 (폴백)
+        logger.info(f"캐시 미스: {district_name} → Tavily API 호출")
+        return await self._search_from_api(district_name, days, max_total)
+
+    def _get_from_cache(self, district_name: str, max_total: int = 20) -> Optional[list[dict]]:
+        """Redis 캐시에서 뉴스 조회"""
+        try:
+            from app.services.cache_service import get_cache_service
+            cache = get_cache_service()
+            articles = cache.get_all_news_cache(district_name)
+
+            if articles:
+                return articles[:max_total]
+            return None
+
+        except Exception as e:
+            logger.warning(f"캐시 조회 실패: {e}")
+            return None
+
+    async def _search_from_api(
+        self,
+        district_name: str,
+        days: int = 90,
+        max_total: int = 20,
+    ) -> list[dict]:
+        """Tavily API 직접 호출 (폴백용)"""
         queries = [(f"{district_name} 상권", "일반", 5)]
         queries += [
             (f"{district_name} {keyword}", category, 3)

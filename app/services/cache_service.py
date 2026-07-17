@@ -13,7 +13,8 @@ class CacheService:
 
     # TTL 정책
     TTL_PERMANENT = None      # 영구 (grade, all_grades)
-    TTL_NEWS = 21600          # 6시간 (뉴스)
+    TTL_NEWS = 21600          # 6시간 (뉴스 임베딩 플래그)
+    TTL_NEWS_CACHE = 86400    # 24시간 (뉴스 캐시)
 
     def __init__(self, redis_url: str = "redis://localhost:6379"):
         self.redis = redis.from_url(redis_url, decode_responses=True)
@@ -96,6 +97,65 @@ class CacheService:
         """뉴스 임베딩 여부 확인"""
         key = f"news_embedded:{self._normalize_query(query)}"
         return self.redis.exists(key) == 1
+
+    # ─────────────────────────────────────────
+    # 뉴스 배치 캐시 (24시간 TTL)
+    # ─────────────────────────────────────────
+
+    def set_news_cache(
+        self,
+        district_name: str,
+        category: str,
+        articles: list[dict]
+    ) -> None:
+        """뉴스 검색 결과 캐시 저장 (24시간 TTL)"""
+        key = f"news_cache:{district_name}:{category}"
+        self.redis.setex(key, self.TTL_NEWS_CACHE, json.dumps(articles))
+
+    def get_news_cache(
+        self,
+        district_name: str,
+        category: str
+    ) -> Optional[list[dict]]:
+        """뉴스 캐시 조회"""
+        key = f"news_cache:{district_name}:{category}"
+        value = self.redis.get(key)
+        if value:
+            return json.loads(value)
+        return None
+
+    def get_all_news_cache(self, district_name: str) -> list[dict]:
+        """구 단위 전체 카테고리 뉴스 캐시 조회 및 병합"""
+        pattern = f"news_cache:{district_name}:*"
+        keys = list(self.redis.scan_iter(match=pattern))
+
+        if not keys:
+            return []
+
+        seen_urls = set()
+        merged = []
+
+        for key in keys:
+            value = self.redis.get(key)
+            if value:
+                articles = json.loads(value)
+                for article in articles:
+                    url = article.get("url", "")
+                    if url and url not in seen_urls:
+                        seen_urls.add(url)
+                        merged.append(article)
+
+        # 스코어 높은 순 정렬
+        merged.sort(key=lambda a: a.get("score", 0), reverse=True)
+        return merged
+
+    def delete_news_cache(self, district_name: str) -> int:
+        """구 단위 뉴스 캐시 삭제"""
+        pattern = f"news_cache:{district_name}:*"
+        keys = list(self.redis.scan_iter(match=pattern))
+        if keys:
+            return self.redis.delete(*keys)
+        return 0
 
     # ─────────────────────────────────────────
     # 범용 메서드

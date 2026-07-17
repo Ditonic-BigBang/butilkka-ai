@@ -25,5 +25,8 @@ tavily-python==0.4.0
 # Redis
 redis==5.0.0
 
+# Scheduler
+APScheduler==3.10.4
+
 # Utils
 python-multipart==0.0.9

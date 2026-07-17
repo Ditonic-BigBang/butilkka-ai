@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
 
-from app.api.routes import predict, report
+from app.api.routes import predict, report, admin
 from app.core.config import get_settings
 from app.services.news_service import news_service
 
@@ -19,9 +19,12 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting up...")
+    from app.core.scheduler import start_scheduler, shutdown_scheduler
+    start_scheduler()
     yield
     # Shutdown
     logger.info("Shutting down...")
+    shutdown_scheduler()
     await news_service.close()
 
 
@@ -44,6 +47,7 @@ app.add_middleware(
 # Routes
 app.include_router(predict.router, prefix="/api")
 app.include_router(report.router, prefix="/api")
+app.include_router(admin.router, prefix="/api")
 
 
 @app.get("/")
