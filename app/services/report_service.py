@@ -113,7 +113,9 @@ class ReportService:
         )
 
         alternative_regions = self._find_alternatives(
+            current_region_name=normalized_region_name,
             current_grade=grade,
+            current_score=score,
             decline_type=decline_type,
             all_grades=all_grades,
             exclude_code=normalized_region_code
@@ -381,12 +383,16 @@ class ReportService:
 
     def _find_alternatives(
         self,
+        current_region_name: str,
         current_grade: str,
+        current_score: int,
         decline_type: str,
         all_grades: list[dict],
         exclude_code: str
     ) -> list[dict]:
-        """대안 지역 찾기 (더 좋은 등급 우선, 부족하면 점수 높은 순으로 최대 5개까지 채움)"""
+        """대안 지역(= 상승세인 대안 상권 추천) 찾기.
+        더 좋은 등급 우선, 부족하면 점수 높은 순으로 최대 5개까지 채우고,
+        추천 사유는 LLM으로 자연스럽게 작성 (근거는 등급/점수/유형 비교로만 한정)."""
         grade_order = ["A", "B", "C", "D", "E"]
 
         try:
@@ -418,19 +424,76 @@ class ReportService:
 
         picked = (better + rest)[:5]
 
-        return [
-            {
-                "region_code": _normalize_region_code(item.get("region_code")),
+        reasons = self._call_alternative_reasons(
+            current_region_name=current_region_name,
+            current_grade=current_grade,
+            current_score=current_score,
+            decline_type=decline_type,
+            candidates=picked
+        )
+
+        results = []
+        for item in picked:
+            region_code = _normalize_region_code(item.get("region_code"))
+            score_diff = item.get("score", 50) - current_score
+            results.append({
+                "region_code": region_code,
                 "region_name": (item.get("region_name") or item.get("district_name") or "").strip(),
-                "reason": (
+                "reason": reasons.get(region_code) or (
                     f"{item.get('grade', 'C')}등급 상권 (현재보다 양호)"
                     if current_idx is not None and grade_idx(item) < current_idx
                     else f"{item.get('grade', 'C')}등급 상권"
                 ),
-                "stat": f"점수 {item.get('score', 50)}점"
-            }
-            for item in picked
-        ]
+                "stat": f"점수 {item.get('score', 50)}점" + (f" (현재보다 {score_diff:+d})" if score_diff else "")
+            })
+        return results
+
+    def _call_alternative_reasons(
+        self,
+        current_region_name: str,
+        current_grade: str,
+        current_score: int,
+        decline_type: str,
+        candidates: list[dict]
+    ) -> dict[str, str]:
+        """대안 상권 추천 사유를 LLM으로 생성. 등급/점수/유형 비교 외의 수치(매출, 임대료,
+        유동인구 등)는 갖고 있지 않으므로 절대 지어내지 않도록 프롬프트에서 명시한다."""
+        if not candidates:
+            return {}
+
+        candidates_text = "\n".join(
+            f"- region_code={_normalize_region_code(item.get('region_code'))}, 지역명={(item.get('region_name') or item.get('district_name') or '').strip()}, "
+            f"등급={item.get('grade', 'C')}, 점수={item.get('score', 50)}점, 유형={item.get('decline_type', '정체')}"
+            for item in candidates
+        )
+
+        prompt = f"""당신은 상권 분석 전문가입니다. 현재 상권이 부진해 이전을 고민 중인 소상공인에게
+대안 상권 후보를 추천하려 합니다.
+
+## 현재 상권
+- 지역: {current_region_name}
+- 등급: {current_grade} (점수: {current_score}점)
+- 유형: {decline_type}
+
+## 대안 후보
+{candidates_text}
+
+## 요청
+각 후보가 현재 상권 대비 어떤 점에서 나은 대안인지 등급/점수/유형 차이에 근거해서만
+한 줄로 서술하세요.
+
+**중요**: 위에 주어진 등급·점수·유형 외의 정보(매출, 임대료, 유동인구, 업종 등)는 모르는
+정보이므로 절대 지어내지 말 것. 오직 등급/점수/유형 비교만으로 서술한다.
+
+JSON으로만 응답:
+{{
+    "reasons": {{
+        "<region_code>": "추천 사유 (25자 이내, 완전한 문장 아니어도 됨)"
+    }}
+}}"""
+
+        result = self._call_llm_json(prompt)
+        return result.get("reasons", {}) or {}
 
 
 def create_report_service(openai_api_key: str, chroma_db_dir: str = "chroma_db") -> ReportService:

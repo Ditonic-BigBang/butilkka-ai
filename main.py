@@ -19,8 +19,10 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting up...")
-    from app.core.scheduler import start_scheduler, shutdown_scheduler
+    from app.core.scheduler import start_scheduler, shutdown_scheduler, run_initial_batch
     start_scheduler()
+    # 서버 시작 시 뉴스 캐시가 비어있으면 배치 실행
+    await run_initial_batch()
     yield
     # Shutdown
     logger.info("Shutting down...")

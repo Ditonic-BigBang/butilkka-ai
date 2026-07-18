@@ -38,6 +38,19 @@ def setup_scheduler():
     logger.info("스케줄러 작업 등록 완료: news_batch (매일 04:00)")
 
 
+async def run_initial_batch():
+    """서버 시작 시 초기 배치 실행 (캐시가 비어있을 때)"""
+    from app.services.cache_service import get_cache_service
+
+    cache = get_cache_service()
+    # 캐시에 뉴스가 없으면 배치 실행
+    if not cache.has_any_news_cache():
+        logger.info("뉴스 캐시가 비어있음 - 초기 배치 실행")
+        await _run_news_batch()
+    else:
+        logger.info("뉴스 캐시 존재 - 초기 배치 스킵")
+
+
 def start_scheduler():
     """스케줄러 시작"""
     setup_scheduler()

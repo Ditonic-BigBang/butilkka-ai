@@ -157,6 +157,13 @@ class CacheService:
             return self.redis.delete(*keys)
         return 0
 
+    def has_any_news_cache(self) -> bool:
+        """뉴스 캐시가 하나라도 있는지 확인"""
+        pattern = "news_cache:*"
+        for _ in self.redis.scan_iter(match=pattern, count=1):
+            return True
+        return False
+
     # ─────────────────────────────────────────
     # 범용 메서드
     # ─────────────────────────────────────────

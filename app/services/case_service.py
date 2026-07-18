@@ -79,7 +79,8 @@ class CaseService:
             logger.warning(f"유사 사례 벡터 검색 실패: {e}")
             return []
 
-        seen = set()
+        seen_ids = set()
+        seen_display_regions = set()
         results = []
         for doc, score in sorted(raw, key=lambda x: x[1]):
             meta = doc.metadata
@@ -90,12 +91,20 @@ class CaseService:
             if region_code == exclude_region_code:
                 continue
 
-            # 큐레이션 사례는 region_code(EXT-CASE)를 공유하므로 doc_id로 구분해야
-            # 서로 다른 사례가 "같은 지역"으로 취급되어 걸러지지 않는다.
             doc_id = meta.get("doc_id")
-            if doc_id in seen:
+            if doc_id in seen_ids:
                 continue
-            seen.add(doc_id)
+
+            # 응답에서는 구 단위로 표시되므로(_find_similar_cases가 district_name을 우선
+            # 사용) 서로 다른 사례라도 같은 구 소속이면 같은 "지역"으로 보인다. 점수가
+            # 더 좋은(= 먼저 등장하는, raw가 score 오름차순 정렬됨) 사례 하나만 남긴다.
+            display_region = (meta.get("district_name") or meta.get("region_name") or "").strip()
+            if display_region and display_region in seen_display_regions:
+                continue
+
+            seen_ids.add(doc_id)
+            if display_region:
+                seen_display_regions.add(display_region)
 
             # 저장 시 None -> "" 로 치환했던 것을 복원
             results.append({k: (None if v == "" else v) for k, v in meta.items()})
