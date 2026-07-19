@@ -448,10 +448,6 @@ class ReportService:
             quarter=quarter
         )
 
-        # baseDate 계산 (예: 2026-03)
-        month = (quarter - 1) * 3 + 3  # Q1=03, Q2=06, Q3=09, Q4=12
-        base_date = f"{year}-{month:02d}"
-
         results = []
         for idx, item in enumerate(picked):
             region_code = _normalize_region_code(item.get("region_code"))
@@ -460,14 +456,7 @@ class ReportService:
                 "rank": idx + 1,
                 "region_code": region_code,
                 "dong_name": region_name,  # 현재는 구 이름 사용
-                "ai_message": ai_messages.get(region_code) or f"{region_name}은 {item.get('grade', 'C')}등급 상권으로 현재보다 양호한 상태예요.",
-                "store_count": item.get("store_count_delta"),
-                "store_count_unit": "개",
-                "floating_population": item.get("foot_traffic_delta"),
-                "floating_population_unit": "명/일",
-                "vacancy": item.get("vacancy_delta"),
-                "vacancy_unit": "건",
-                "base_date": base_date
+                "ai_message": ai_messages.get(region_code) or f"{region_name}은 {item.get('grade', 'C')}등급 상권으로 현재보다 양호한 상태예요."
             })
         return results
 

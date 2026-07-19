@@ -107,18 +107,11 @@ class SimilarCaseItem(AliasedModel):
 
 
 class AlternativeRegionItem(AliasedModel):
-    """대안 상권 카드 (동 랭킹 카드)"""
+    """대안 상권 카드 - AI가 제공하는 필드만 (통계는 BE가 추가)"""
     rank: int
     region_code: str = Field(alias="regionCode")
     dong_name: str = Field(alias="dongName")
     ai_message: str = Field(alias="aiMessage")  # AI 생성 문장
-    store_count: int | None = Field(default=None, alias="storeCount")
-    store_count_unit: str = Field(default="개", alias="storeCountUnit")
-    floating_population: int | None = Field(default=None, alias="floatingPopulation")
-    floating_population_unit: str = Field(default="명/일", alias="floatingPopulationUnit")
-    vacancy: int | None = Field(default=None)
-    vacancy_unit: str = Field(default="건", alias="vacancyUnit")
-    base_date: str = Field(alias="baseDate")  # "2026-03" 형식
 
 
 class AiRecommendation(AliasedModel):
