@@ -19,7 +19,7 @@ env/
 *.swo
 
 # Models (large files)
-*.pkl
+# *.pkl  # 모델 파일은 버전 관리 필요
 *.joblib
 *.h5
 *.pt
