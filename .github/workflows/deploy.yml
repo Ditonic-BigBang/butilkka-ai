@@ -41,8 +41,8 @@ jobs:
 
             # Docker Compose 실행 (redis + fastapi, chroma_db/models는 볼륨으로 영속화됨)
             cd butilkka-ai
-            docker-compose down || true
-            docker-compose up --build -d
+            docker compose down || true
+            docker compose up --build -d
 
             # 정리
             docker image prune -f
