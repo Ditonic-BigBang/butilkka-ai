@@ -107,11 +107,26 @@ class SimilarCaseItem(AliasedModel):
 
 
 class AlternativeRegionItem(AliasedModel):
-    """report_alternative_regions 테이블"""
+    """대안 상권 카드 (동 랭킹 카드)"""
+    rank: int
     region_code: str = Field(alias="regionCode")
-    region_name: str = Field(default="", alias="regionName")
-    reason: str
-    stat: str
+    dong_name: str = Field(alias="dongName")
+    ai_message: str = Field(alias="aiMessage")  # AI 생성 문장
+    store_count: int | None = Field(default=None, alias="storeCount")
+    store_count_unit: str = Field(default="개", alias="storeCountUnit")
+    floating_population: int | None = Field(default=None, alias="floatingPopulation")
+    floating_population_unit: str = Field(default="명/일", alias="floatingPopulationUnit")
+    vacancy: int | None = Field(default=None)
+    vacancy_unit: str = Field(default="건", alias="vacancyUnit")
+    base_date: str = Field(alias="baseDate")  # "2026-03" 형식
+
+
+class AiRecommendation(AliasedModel):
+    """AI 추천 카드"""
+    badge_type: str = Field(default="AI 추천", alias="badgeType")
+    title: str  # "이동을 추천드려요" 또는 "현 위치 유지를 추천드려요"
+    reason_title: str = Field(alias="reasonTitle")  # "장기적인 쇠퇴 예상"
+    reason_detail: str = Field(alias="reasonDetail")  # AI 생성 상세 설명
 
 
 class ReportGenerateResponse(AliasedModel):
@@ -129,6 +144,7 @@ class ReportGenerateResponse(AliasedModel):
     decision_reasons: DecisionReasons = Field(alias="decisionReasons")
     similar_cases: list[SimilarCaseItem] = Field(alias="similarCases")
     alternative_regions: list[AlternativeRegionItem] = Field(alias="alternativeRegions")
+    ai_recommendation: AiRecommendation = Field(alias="aiRecommendation")
 
     # 다음 분기 예측 (quarterly_history 없으면 둘 다 null)
     predicted_trend: str | None = Field(default=None, alias="predictedTrend")       # 성장/유지/쇠퇴
@@ -187,6 +203,11 @@ async def generate_report(
             decision_reasons=DecisionReasons(**result.get("decision_reasons", {})),
             similar_cases=[SimilarCaseItem(**s) for s in result.get("similar_cases", [])],
             alternative_regions=[AlternativeRegionItem(**a) for a in result.get("alternative_regions", [])],
+            ai_recommendation=AiRecommendation(**result.get("ai_recommendation", {
+                "title": "현 위치 유지를 추천드려요" if result.get("decision_recommendation") == "버티기" else "이동을 추천드려요",
+                "reason_title": result.get("decision_title", ""),
+                "reason_detail": result.get("decision_description", "")
+            })),
             predicted_trend=result.get("predicted_trend"),
             predicted_next_grade=result.get("predicted_next_grade"),
         )

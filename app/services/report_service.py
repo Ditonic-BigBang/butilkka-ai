@@ -118,7 +118,9 @@ class ReportService:
             current_score=score,
             decline_type=decline_type,
             all_grades=all_grades,
-            exclude_code=normalized_region_code
+            exclude_code=normalized_region_code,
+            year=year,
+            quarter=quarter
         )
 
         # 7. 다음 분기 예상 등급 (8분기 이력 있을 때만, 실패해도 응답엔 영향 없음)
@@ -138,11 +140,20 @@ class ReportService:
             except Exception as e:
                 logger.warning(f"다음 분기 예측 실패 (무시하고 계속): {e}")
 
-        # 8. 결과 조합
+        # 8. AI 추천 카드 생성
+        recommendation = decision_result.get("recommendation", "버티기")
+        ai_recommendation = {
+            "badge_type": "AI 추천",
+            "title": "현 위치 유지를 추천드려요" if recommendation == "버티기" else "이동을 추천드려요",
+            "reason_title": decision_result.get("title", ""),
+            "reason_detail": decision_result.get("description", "")
+        }
+
+        # 9. 결과 조합
         return {
             "summary": outlook_result.get("summary", ""),
             "ai_outlook": outlook_result.get("ai_outlook", ""),
-            "decision_recommendation": decision_result.get("recommendation", "버티기"),
+            "decision_recommendation": recommendation,
             "decision_title": decision_result.get("title", ""),
             "decision_description": decision_result.get("description", ""),
             "causes": cause_signal_result.get("causes", []),
@@ -150,6 +161,7 @@ class ReportService:
             "decision_reasons": decision_result.get("reasons", {}),
             "similar_cases": similar_cases,
             "alternative_regions": alternative_regions,
+            "ai_recommendation": ai_recommendation,
             "predicted_trend": predicted_trend,
             "predicted_next_grade": predicted_next_grade,
         }
@@ -388,11 +400,13 @@ class ReportService:
         current_score: int,
         decline_type: str,
         all_grades: list[dict],
-        exclude_code: str
+        exclude_code: str,
+        year: int,
+        quarter: int
     ) -> list[dict]:
         """대안 지역(= 상승세인 대안 상권 추천) 찾기.
-        더 좋은 등급 우선, 부족하면 점수 높은 순으로 최대 5개까지 채우고,
-        추천 사유는 LLM으로 자연스럽게 작성 (근거는 등급/점수/유형 비교로만 한정)."""
+        더 좋은 등급 우선, 부족하면 점수 높은 순으로 최대 3개까지 채우고,
+        추천 사유는 LLM으로 자연스럽게 작성."""
         grade_order = ["A", "B", "C", "D", "E"]
 
         try:
@@ -422,42 +436,52 @@ class ReportService:
             key=lambda i: -i.get("score", 0)
         )
 
-        picked = (better + rest)[:5]
+        picked = (better + rest)[:3]  # 최대 3개
 
-        reasons = self._call_alternative_reasons(
+        ai_messages = self._call_alternative_messages(
             current_region_name=current_region_name,
             current_grade=current_grade,
             current_score=current_score,
             decline_type=decline_type,
-            candidates=picked
+            candidates=picked,
+            year=year,
+            quarter=quarter
         )
 
+        # baseDate 계산 (예: 2026-03)
+        month = (quarter - 1) * 3 + 3  # Q1=03, Q2=06, Q3=09, Q4=12
+        base_date = f"{year}-{month:02d}"
+
         results = []
-        for item in picked:
+        for idx, item in enumerate(picked):
             region_code = _normalize_region_code(item.get("region_code"))
-            score_diff = item.get("score", 50) - current_score
+            region_name = (item.get("region_name") or item.get("district_name") or "").strip()
             results.append({
+                "rank": idx + 1,
                 "region_code": region_code,
-                "region_name": (item.get("region_name") or item.get("district_name") or "").strip(),
-                "reason": reasons.get(region_code) or (
-                    f"{item.get('grade', 'C')}등급 상권 (현재보다 양호)"
-                    if current_idx is not None and grade_idx(item) < current_idx
-                    else f"{item.get('grade', 'C')}등급 상권"
-                ),
-                "stat": f"점수 {item.get('score', 50)}점" + (f" (현재보다 {score_diff:+d})" if score_diff else "")
+                "dong_name": region_name,  # 현재는 구 이름 사용
+                "ai_message": ai_messages.get(region_code) or f"{region_name}은 {item.get('grade', 'C')}등급 상권으로 현재보다 양호한 상태예요.",
+                "store_count": item.get("store_count_delta"),
+                "store_count_unit": "개",
+                "floating_population": item.get("foot_traffic_delta"),
+                "floating_population_unit": "명/일",
+                "vacancy": item.get("vacancy_delta"),
+                "vacancy_unit": "건",
+                "base_date": base_date
             })
         return results
 
-    def _call_alternative_reasons(
+    def _call_alternative_messages(
         self,
         current_region_name: str,
         current_grade: str,
         current_score: int,
         decline_type: str,
-        candidates: list[dict]
+        candidates: list[dict],
+        year: int,
+        quarter: int
     ) -> dict[str, str]:
-        """대안 상권 추천 사유를 LLM으로 생성. 등급/점수/유형 비교 외의 수치(매출, 임대료,
-        유동인구 등)는 갖고 있지 않으므로 절대 지어내지 않도록 프롬프트에서 명시한다."""
+        """대안 상권별 AI 메시지를 LLM으로 생성."""
         if not candidates:
             return {}
 
@@ -479,21 +503,20 @@ class ReportService:
 {candidates_text}
 
 ## 요청
-각 후보가 현재 상권 대비 어떤 점에서 나은 대안인지 등급/점수/유형 차이에 근거해서만
-한 줄로 서술하세요.
-
-**중요**: 위에 주어진 등급·점수·유형 외의 정보(매출, 임대료, 유동인구, 업종 등)는 모르는
-정보이므로 절대 지어내지 말 것. 오직 등급/점수/유형 비교만으로 서술한다.
+각 후보에 대해 소상공인에게 보여줄 추천 메시지를 작성하세요.
+- 자연스러운 문장으로 작성 (예: "2026년 1분기부터 2분기까지 유동인구 증가율이 15% 증가했어요.")
+- 등급, 점수, 유형 정보를 활용해 긍정적인 메시지로 작성
+- 각 메시지는 40~60자 내외
 
 JSON으로만 응답:
 {{
-    "reasons": {{
-        "<region_code>": "추천 사유 (25자 이내, 완전한 문장 아니어도 됨)"
+    "messages": {{
+        "<region_code>": "AI 추천 메시지"
     }}
 }}"""
 
         result = self._call_llm_json(prompt)
-        return result.get("reasons", {}) or {}
+        return result.get("messages", {}) or {}
 
 
 def create_report_service(openai_api_key: str, chroma_db_dir: str = "chroma_db") -> ReportService:
