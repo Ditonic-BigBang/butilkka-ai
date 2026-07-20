@@ -46,6 +46,7 @@ class ReportService:
         decline_type: str,    # 성장형/순환형/쇠퇴형/정체형
         context: dict,
         quarterly_history: dict = None,  # 8분기 이력 (있으면 다음 분기 트렌드 예측)
+        all_grades: list[dict] = None,   # BE에서 전달한 구별 등급 정보 (대안 상권용)
     ) -> dict:
         """리포트 생성 파이프라인"""
         normalized_region_code = _normalize_region_code(region_code)
@@ -100,9 +101,10 @@ class ReportService:
             outlook=outlook_result.get("ai_outlook", "")
         )
 
-        # 6. 유사 사례 (벡터 검색) / 대안 지역 (all_grades 캐시)
-        cache = get_cache_service()
-        all_grades = cache.get_all_grades(year, quarter) or []
+        # 6. 유사 사례 (벡터 검색) / 대안 지역 (all_grades: BE에서 전달받은 것 우선, 없으면 캐시)
+        if not all_grades:
+            cache = get_cache_service()
+            all_grades = cache.get_all_grades(year, quarter) or []
 
         similar_cases = self._find_similar_cases(
             region_name=normalized_region_name,

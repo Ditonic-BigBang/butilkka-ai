@@ -35,6 +35,15 @@ class QuarterlyMetrics(AliasedModel):
     closure_rate: list[float] = Field(alias="closureRate")
 
 
+class GradeInfo(AliasedModel):
+    """구별 등급 정보 (대안 상권 추천용)"""
+    region_code: str = Field(alias="regionCode")
+    region_name: str = Field(alias="regionName")
+    grade: str
+    score: int
+    decline_type: str = Field(alias="declineType")
+
+
 class ReportGenerateRequest(AliasedModel):
     """리포트 생성 요청"""
     region_code: str = Field(alias="regionCode")      # 구 코드 (5자리)
@@ -47,6 +56,7 @@ class ReportGenerateRequest(AliasedModel):
     decline_type: str = Field(alias="declineType")   # 성장/정체/쇠퇴
     context: ReportContext
     quarterly_history: QuarterlyMetrics | None = Field(default=None, alias="quarterlyHistory")
+    all_grades: list[GradeInfo] | None = Field(default=None, alias="allGrades")  # 대안 상권용
 
     @model_validator(mode="before")
     @classmethod
@@ -183,6 +193,7 @@ async def generate_report(
             decline_type=request.decline_type,
             context=request.context.model_dump(),
             quarterly_history=request.quarterly_history.model_dump() if request.quarterly_history else None,
+            all_grades=[g.model_dump() for g in request.all_grades] if request.all_grades else None,
         )
 
         return ReportGenerateResponse(
