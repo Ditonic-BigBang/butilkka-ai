@@ -109,8 +109,7 @@ class ReportService:
             district_name=normalized_district_name,
             decline_type=decline_type,
             causes=cause_signal_result.get("causes", []),
-            exclude_code=normalized_region_code,
-            signals=cause_signal_result.get("signals", [])
+            exclude_code=normalized_region_code
         )
 
         alternative_regions = self._find_alternatives(
@@ -372,18 +371,17 @@ class ReportService:
         exclude_code: str,
         signals: list[dict] = None
     ) -> list[dict]:
-        """유사 사례 찾기 (벡터 검색: 큐레이션 사례 + 과거 생성 리포트)
+        """유사 사례 찾기 (벡터 검색: 큐레이션 사례)
 
-        지역명/유형이 아니라 '원인'과 '선행신호'가 비슷한 사례를 찾는 게 목적이라,
-        쿼리를 원인(causes)과 신호(signals) 위주로 구성한다.
+        원인 분석(causes)과 비슷한 케이스를 찾는 게 목적이라,
+        쿼리를 원인(causes)만으로 구성한다.
         지역명을 섞으면 엉뚱하게 지명 자체로 매칭되는 경우가 생겨서 제외.
         """
+        # 원인 분석 기반으로만 유사 사례 검색
         cause_titles = " ".join(c.get("title", "") for c in causes)
-        signal_titles = " ".join(s.get("title", "") for s in (signals or []))
-        # 원인과 신호를 함께 사용하여 더 정확한 매칭
-        query = f"{cause_titles} {signal_titles}".strip()
+        query = cause_titles.strip()
         if not query:
-            query = f"{decline_type}"  # 지역명 제외, 유형만 사용
+            query = decline_type  # 원인이 없으면 유형만 사용
 
         try:
             results = self.case_service.search_similar(query=query, k=5, exclude_region_code=exclude_code)
