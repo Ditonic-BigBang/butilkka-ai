@@ -3,7 +3,7 @@ name: Build, Test & Deploy AI to AWS EC2
 on:
   push:
     branches:
-      - deploy/aws
+      - dev
 
 jobs:
   build-test:
@@ -50,11 +50,11 @@ jobs:
             if [ -d "butilkka-ai" ]; then
               cd butilkka-ai
               git fetch origin
-              git checkout deploy/aws
-              git pull origin deploy/aws
+              git checkout dev
+              git pull origin dev
               cd ..
             else
-              git clone -b deploy/aws https://github.com/Ditonic-BigBang/butilkka-ai.git
+              git clone -b dev https://github.com/Ditonic-BigBang/butilkka-ai.git
             fi
 
             # 환경변수 파일 생성
