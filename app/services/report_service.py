@@ -109,7 +109,8 @@ class ReportService:
             district_name=normalized_district_name,
             decline_type=decline_type,
             causes=cause_signal_result.get("causes", []),
-            exclude_code=normalized_region_code
+            exclude_code=normalized_region_code,
+            signals=cause_signal_result.get("signals", [])
         )
 
         alternative_regions = self._find_alternatives(
@@ -178,10 +179,13 @@ class ReportService:
         """LLM 호출 1: 전망 + 요약"""
         rag_context = self.rag.get_context("상권 전망 동향 변화", k=3)
 
+        # 지역명 표시: district_name과 region_name이 같으면 한 번만
+        display_region = district_name if district_name == region_name or not region_name else f"{district_name} {region_name}"
+
         prompt = f"""당신은 상권 분석 전문가입니다.
 
 ## 분석 대상
-- 지역: {district_name} {region_name}
+- 지역: {display_region}
 - 등급: {grade} (점수: {score}점)
 - 유형: {decline_type}
 - 매출 변화율: {context.get('sales_delta', 'N/A')}%
@@ -196,7 +200,12 @@ class ReportService:
 {{
     "summary": "한 줄 요약 (50자 이내)",
     "ai_outlook": "AI 종합 전망 (5~6줄, 구체적인 이유 포함. 예: 재개발 예정, 대형 건물 입주, 인구 감소 등)"
-}}"""
+}}
+
+## 중요 제약사항
+- ai_outlook에서 지역명을 연달아 두 번 반복하지 마세요 (예: "강남구 강남구", "명동 명동" 금지)
+- 지역명은 문장 내에서 한 번만 언급하세요
+- 구체적인 수치(%, 숫자)는 포함하지 마세요. 대신 "증가", "감소", "상승세", "하락세" 등 정성적 표현을 사용하세요"""
 
         return self._call_llm_json(prompt)
 
@@ -360,16 +369,21 @@ class ReportService:
         district_name: str,
         decline_type: str,
         causes: list[dict],
-        exclude_code: str
+        exclude_code: str,
+        signals: list[dict] = None
     ) -> list[dict]:
         """유사 사례 찾기 (벡터 검색: 큐레이션 사례 + 과거 생성 리포트)
 
-        지역명/유형이 아니라 '원인'이 비슷한 사례를 찾는 게 목적이라, 쿼리를
-        원인(causes) 위주로 구성한다. 지역명을 섞으면 엉뚱하게 지명 자체로
-        매칭되는 경우가 생겨서 제외 (예: "명동"이 들어간 다른 사례로 오매칭).
+        지역명/유형이 아니라 '원인'과 '선행신호'가 비슷한 사례를 찾는 게 목적이라,
+        쿼리를 원인(causes)과 신호(signals) 위주로 구성한다.
+        지역명을 섞으면 엉뚱하게 지명 자체로 매칭되는 경우가 생겨서 제외.
         """
         cause_titles = " ".join(c.get("title", "") for c in causes)
-        query = cause_titles or f"{district_name} {region_name} {decline_type}"
+        signal_titles = " ".join(s.get("title", "") for s in (signals or []))
+        # 원인과 신호를 함께 사용하여 더 정확한 매칭
+        query = f"{cause_titles} {signal_titles}".strip()
+        if not query:
+            query = f"{decline_type}"  # 지역명 제외, 유형만 사용
 
         try:
             results = self.case_service.search_similar(query=query, k=5, exclude_region_code=exclude_code)
@@ -476,7 +490,7 @@ class ReportService:
 
         candidates_text = "\n".join(
             f"- region_code={_normalize_region_code(item.get('region_code'))}, 지역명={(item.get('region_name') or item.get('district_name') or '').strip()}, "
-            f"등급={item.get('grade', 'C')}, 점수={item.get('score', 50)}점, 유형={item.get('decline_type', '정체')}"
+            f"등급={item.get('grade', 'C')}, 유형={item.get('decline_type', '정체')}"
             for item in candidates
         )
 
@@ -485,7 +499,7 @@ class ReportService:
 
 ## 현재 상권
 - 지역: {current_region_name}
-- 등급: {current_grade} (점수: {current_score}점)
+- 등급: {current_grade}
 - 유형: {decline_type}
 
 ## 대안 후보
@@ -493,8 +507,9 @@ class ReportService:
 
 ## 요청
 각 후보에 대해 소상공인에게 보여줄 추천 메시지를 작성하세요.
-- 자연스러운 문장으로 작성 (예: "2026년 1분기부터 2분기까지 유동인구 증가율이 15% 증가했어요.")
-- 등급, 점수, 유형 정보를 활용해 긍정적인 메시지로 작성
+- 자연스러운 문장으로 작성 (예: "최근 유동인구가 꾸준히 증가하고 있어요.")
+- 등급과 유형 정보를 활용해 긍정적인 메시지로 작성
+- 구체적인 수치(%, 점수)는 포함하지 마세요
 - 각 메시지는 40~60자 내외
 
 JSON으로만 응답:
